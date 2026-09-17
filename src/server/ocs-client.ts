@@ -154,16 +154,49 @@ async function call<T>(
   if (body && typeof body === 'object' && 'statusCode' in (body as Record<string, unknown>)) {
     const env = body as OcsEnvelope<T>;
     if (env.statusCode !== 200) {
-      throw new OcsError(env.error || `OCS menolak permintaan (kode ${env.statusCode}).`, 502);
+      throw new OcsError(
+        `${env.error || pesanError(body) || 'permintaan ditolak'} (kode ${env.statusCode}) — ${path.split('?')[0]}`,
+        502,
+      );
     }
     return env.data;
   }
 
   if (!res.ok) {
-    const msg = typeof body === 'string' && body ? body.slice(0, 300) : `HTTP ${res.status}`;
-    throw new OcsError(`OCS menolak permintaan: ${msg}`, 502);
+    const msg = pesanError(body) || `HTTP ${res.status}`;
+    throw new OcsError(`OCS menolak: ${msg} — ${path.split('?')[0]}`, 502);
   }
   return body as T;
+}
+
+/**
+ * Ambil pesan yang bisa dibaca manusia dari balasan error OCS.
+ * Backend ASP.NET mengembalikan bentuk yang berbeda-beda: string polos,
+ * { error }, { message }, { title }, atau ProblemDetails { errors: {...} }.
+ * Tanpa fungsi ini semuanya tereduksi jadi "HTTP 400" yang tidak menolong.
+ */
+function pesanError(body: unknown): string {
+  if (!body) return '';
+  if (typeof body === 'string') return body.slice(0, 400).trim();
+  if (typeof body !== 'object') return String(body).slice(0, 400);
+
+  const b = body as Record<string, unknown>;
+  const langsung = b.error ?? b.Error ?? b.message ?? b.Message ?? b.title ?? b.Title ?? b.detail ?? b.Detail;
+  if (typeof langsung === 'string' && langsung.trim()) return langsung.slice(0, 400).trim();
+
+  const errors = (b.errors ?? b.Errors) as Record<string, unknown> | undefined;
+  if (errors && typeof errors === 'object') {
+    const rinci = Object.entries(errors)
+      .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : String(v)}`)
+      .join(' · ');
+    if (rinci) return rinci.slice(0, 400);
+  }
+
+  try {
+    return JSON.stringify(body).slice(0, 400);
+  } catch {
+    return '';
+  }
 }
 
 const q = (v: string) => encodeURIComponent(v);
@@ -256,9 +289,76 @@ export function getBasketManifestList(): Promise<string[]> {
   return call<string[]>('/MasterData/GetBasketManifestList', { method: 'GET' });
 }
 
+/** Daftar order belum dimanifest versi lama (GET, TIDAK membuat dokumen). */
+export function orderNotManifested(shipper: string): Promise<unknown[]> {
+  return call<unknown[]>(
+    `/Fulfillment/OrderNotManifested?shippingProvider=${q(shipper)}&isAll=false`,
+    { method: 'GET' },
+  );
+}
+
 /** Tes koneksi + kredensial (dipakai halaman Admin > Setelan). */
 export async function ping(): Promise<{ ok: boolean; areas: string[] }> {
   await login();
   const areas = await getAreaList();
   return { ok: true, areas: Array.isArray(areas) ? areas : [] };
+}
+
+export type LangkahDiagnosa = { langkah: string; ok: boolean; pesan: string };
+
+/**
+ * Diagnosa read-only: memeriksa tiap prasyarat yang bisa membuat
+ * OrderNotManifestedV2 menolak dengan 400, TANPA membuat dokumen manifest.
+ */
+export async function diagnosa(params: { shipper: string; areaId: string }): Promise<LangkahDiagnosa[]> {
+  const hasil: LangkahDiagnosa[] = [];
+  const catat = (langkah: string, ok: boolean, pesan: string) => hasil.push({ langkah, ok, pesan });
+
+  try {
+    await login();
+    catat('Login OCS', true, `Berhasil sebagai ${process.env.OCS_USERNAME} / ${process.env.OCS_COMPANYDB}`);
+  } catch (e) {
+    catat('Login OCS', false, e instanceof Error ? e.message : 'gagal');
+    return hasil;
+  }
+
+  try {
+    const areas = await getAreaList();
+    const daftar = Array.isArray(areas) ? areas.map(String) : [];
+    const cocok = daftar.includes(params.areaId);
+    catat(
+      `Area "${params.areaId}"`,
+      cocok,
+      cocok ? `Dikenal OCS. Semua area: ${daftar.join(', ')}` : `TIDAK ada di OCS. Yang dikenal: ${daftar.join(', ')}`,
+    );
+  } catch (e) {
+    catat('Ambil daftar area', false, e instanceof Error ? e.message : 'gagal');
+  }
+
+  try {
+    const orders = await orderNotManifested(params.shipper);
+    const jumlah = Array.isArray(orders) ? orders.length : 0;
+    catat(
+      `Kurir "${params.shipper}"`,
+      true,
+      jumlah > 0
+        ? `Diterima OCS. ${jumlah} order belum dimanifest untuk kurir ini.`
+        : 'Diterima OCS, tapi TIDAK ADA order yang menunggu dimanifest untuk kurir ini. Manifest atas kurir tanpa order biasanya ditolak.',
+    );
+  } catch (e) {
+    catat(
+      `Kurir "${params.shipper}"`,
+      false,
+      `${e instanceof Error ? e.message : 'gagal'} — nama kurir harus persis sama dengan pilihan di OCS Manifest V2.`,
+    );
+  }
+
+  try {
+    const baskets = await getBasketManifestList();
+    catat('Daftar basket OCS', true, `${Array.isArray(baskets) ? baskets.length : 0} basket tercatat di OCS.`);
+  } catch (e) {
+    catat('Daftar basket OCS', false, e instanceof Error ? e.message : 'gagal');
+  }
+
+  return hasil;
 }

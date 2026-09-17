@@ -25,15 +25,32 @@ type SyncStatus = {
   }[];
 };
 
+type Expedisi = { id: number; code: string; name: string; ocsShipper: string; active: boolean };
+type Langkah = { langkah: string; ok: boolean; pesan: string };
+
 export default function SettingsPage() {
   const [status, setStatus] = useState<SyncStatus | null>(null);
   const [ping, setPing] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [antrean, setAntrean] = useState(0);
+  const [expedisiList, setExpedisiList] = useState<Expedisi[]>([]);
+  const [expedisiId, setExpedisiId] = useState<number | ''>('');
+  const [langkah, setLangkah] = useState<Langkah[] | null>(null);
+  const [diagBusy, setDiagBusy] = useState(false);
 
   const muat = useCallback(async () => {
     const res = await apiGet<SyncStatus>('/api/sync-status');
     if (res.ok) setStatus(res.data);
+  }, []);
+
+  useEffect(() => {
+    void apiGet<Expedisi[]>('/api/expedisi').then((r) => {
+      if (r.ok) {
+        const aktif = r.data.filter((e) => e.active);
+        setExpedisiList(aktif);
+        if (aktif[0]) setExpedisiId(aktif[0].id);
+      }
+    });
   }, []);
 
   useEffect(() => {
@@ -66,6 +83,22 @@ export default function SettingsPage() {
     toast('success', 'Koneksi OCS berhasil.');
   };
 
+  const jalankanDiagnosa = async () => {
+    if (!expedisiId) return;
+    setDiagBusy(true);
+    setLangkah(null);
+    const res = await apiPost<{ shipper: string; areaId: string; langkah: Langkah[] }>('/api/ocs/diagnose', {
+      expedisiId,
+      areaId: 'Pusat',
+    });
+    setDiagBusy(false);
+    if (!res.ok) {
+      toast('error', res.error);
+      return;
+    }
+    setLangkah(res.data.langkah);
+  };
+
   const kirimUlang = async () => {
     setBusy(true);
     await flushQueue();
@@ -95,6 +128,65 @@ export default function SettingsPage() {
           </button>
         </div>
         {ping && <div style={{ fontSize: 13 }}>{ping}</div>}
+      </div>
+
+      <div className="card" style={{ display: 'grid', gap: 10 }}>
+        <strong style={{ fontSize: 14 }}>Diagnosa manifest</strong>
+        <p style={{ fontSize: 13, color: 'var(--ink-label)', margin: 0 }}>
+          Kalau OCS menolak saat membuka basket (mis. HTTP 400), jalankan ini. Semua pemeriksaan bersifat baca
+          saja — tidak ada dokumen manifest yang dibuat di OCS.
+        </p>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+          <div style={{ minWidth: 220 }}>
+            <label className="field-label" htmlFor="dx">
+              Ekspedisi yang bermasalah
+            </label>
+            <select
+              id="dx"
+              className="select-field"
+              value={expedisiId}
+              onChange={(e) => setExpedisiId(Number(e.target.value))}
+            >
+              {expedisiList.map((e) => (
+                <option key={e.id} value={e.id}>
+                  {e.code} → OCS: {e.ocsShipper}
+                </option>
+              ))}
+            </select>
+          </div>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => void jalankanDiagnosa()}
+            disabled={diagBusy || !expedisiId}
+          >
+            {diagBusy ? 'Memeriksa…' : 'Periksa sekarang'}
+          </button>
+        </div>
+
+        {langkah && (
+          <div style={{ display: 'grid', gap: 6 }}>
+            {langkah.map((l, i) => (
+              <div
+                key={i}
+                style={{
+                  display: 'flex',
+                  gap: 10,
+                  alignItems: 'flex-start',
+                  padding: '8px 10px',
+                  borderRadius: 8,
+                  fontSize: 13,
+                  background: l.ok ? 'var(--positive-bg)' : 'var(--negative-bg)',
+                  color: l.ok ? 'var(--positive)' : 'var(--negative)',
+                  border: `1px solid ${l.ok ? 'var(--positive-border)' : 'var(--negative-border)'}`,
+                }}
+              >
+                <strong style={{ flex: 'none', minWidth: 130 }}>{l.langkah}</strong>
+                <span style={{ whiteSpace: 'normal' }}>{l.pesan}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="kpi-grid">
