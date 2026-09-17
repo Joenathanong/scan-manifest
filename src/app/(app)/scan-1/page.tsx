@@ -1,0 +1,233 @@
+'use client';
+
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { apiGet, apiPost } from '@/lib/client';
+import { playForTone, vibrate } from '@/lib/audio';
+import { sendOrQueue } from '@/lib/offline-queue';
+import { toast } from '@/components/Toast';
+import { fmtNumber, fmtTime } from '@/lib/date';
+
+type Scan1Result = {
+  status: 'OK' | 'DOUBLE' | 'REJECT';
+  tone: 'success' | 'double' | 'failed';
+  message: string;
+  resi: string;
+  expedisi: string | null;
+  totalHariIni: number;
+};
+
+type Row = {
+  id: number;
+  resi: string;
+  status: string;
+  scan1At: string;
+  expedisi: { code: string } | null;
+};
+
+type Feed = { tone: 'success' | 'double' | 'failed' | 'idle' | 'queued'; text: string };
+
+export default function Scan1Page() {
+  const [value, setValue] = useState('');
+  const [feed, setFeed] = useState<Feed>({ tone: 'idle', text: 'Siap. Scan resi sekarang.' });
+  const [rows, setRows] = useState<Row[]>([]);
+  const [totalSaya, setTotalSaya] = useState(0);
+  const [totalHariIni, setTotalHariIni] = useState(0);
+  const [antreanLokal, setAntreanLokal] = useState<string[]>([]);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const muat = useCallback(async () => {
+    const res = await apiGet<{ rows: Row[]; totalSaya: number; totalHariIni: number }>('/api/scan1?take=25');
+    if (res.ok) {
+      setRows(res.data.rows);
+      setTotalSaya(res.data.totalSaya);
+      setTotalHariIni(res.data.totalHariIni);
+    }
+  }, []);
+
+  useEffect(() => {
+    void muat();
+    const t = setInterval(muat, 30000);
+    return () => clearInterval(t);
+  }, [muat]);
+
+  // Field scan tidak pernah di-disable & selalu kembali fokus (design-ocs §10.5).
+  useEffect(() => {
+    const focus = () => inputRef.current?.focus();
+    focus();
+    const t = setInterval(focus, 2000);
+    return () => clearInterval(t);
+  }, []);
+
+  const kirim = async (raw: string) => {
+    const resi = raw.trim().toUpperCase();
+    if (!resi) return;
+    setValue('');
+
+    // Dobel lokal: tertangkap walau jaringan mati.
+    if (antreanLokal.includes(resi)) {
+      setFeed({ tone: 'double', text: `${resi} sudah discan di perangkat ini.` });
+      playForTone('double');
+      vibrate([60, 60, 60]);
+      return;
+    }
+
+    const res = await sendOrQueue<Scan1Result>('scan1', '/api/scan1', { resi }, resi);
+
+    if (res.queued) {
+      setAntreanLokal((a) => [...a, resi]);
+      setFeed({ tone: 'queued', text: `${resi} masuk antrean — jaringan sedang putus.` });
+      playForTone('success');
+      vibrate(40);
+      return;
+    }
+    if (res.error || !res.data) {
+      setFeed({ tone: 'failed', text: res.error ?? 'Gagal menyimpan.' });
+      playForTone('failed');
+      vibrate([120, 60, 120]);
+      return;
+    }
+
+    const data = res.data;
+    setAntreanLokal((a) => [...a, resi]);
+    setFeed({ tone: data.tone, text: data.message });
+    playForTone(data.tone);
+    vibrate(data.tone === 'success' ? 40 : [120, 60, 120]);
+    setTotalHariIni(data.totalHariIni);
+    if (data.status === 'OK') {
+      setTotalSaya((n) => n + 1);
+      setRows((r) => [
+        {
+          id: Date.now(),
+          resi: data.resi,
+          status: 'AWAITING_PICKUP',
+          scan1At: new Date().toISOString(),
+          expedisi: data.expedisi ? { code: data.expedisi } : null,
+        },
+        ...r,
+      ].slice(0, 25));
+    }
+  };
+
+  const batalkan = async (id: number, resi: string) => {
+    const res = await apiPost(`/api/items/${id}/void`, { alasan: 'Salah scan' });
+    if (res.ok) {
+      toast('success', `${resi} dibatalkan.`);
+      setAntreanLokal((a) => a.filter((r) => r !== resi));
+      void muat();
+    } else {
+      toast('error', res.error);
+    }
+  };
+
+  const feedClass =
+    feed.tone === 'idle'
+      ? 'scan-feed scan-feed-idle'
+      : feed.tone === 'queued'
+        ? 'scan-feed scan-feed-double'
+        : `scan-feed scan-feed-${feed.tone}`;
+
+  return (
+    <div style={{ display: 'grid', gap: 'var(--gap)' }}>
+      <h1 className="page-title">Scan 1 — Resi Masuk</h1>
+      <p style={{ color: 'var(--ink-label)', fontSize: 13, marginTop: -6 }}>
+        Scan resi apa adanya. Keranjang belum dibentuk di tahap ini — penyortiran per ekspedisi dilakukan
+        setelahnya, lalu diproses di Scan 2.
+      </p>
+
+      <div className="kpi-grid">
+        <div className="card">
+          <div className="kpi-label">Menunggu pickup hari ini</div>
+          <div className="kpi-value">{fmtNumber(totalHariIni)}</div>
+        </div>
+        <div className="card">
+          <div className="kpi-label">Scan saya hari ini</div>
+          <div className="kpi-value">{fmtNumber(totalSaya)}</div>
+        </div>
+      </div>
+
+      <div className="card" style={{ display: 'grid', gap: 10 }}>
+        <label className="field-label" htmlFor="scan">
+          Resi
+        </label>
+        <input
+          id="scan"
+          ref={inputRef}
+          className="input-field input-scan"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              void kirim(value);
+            }
+          }}
+          placeholder="SCAN DI SINI"
+          inputMode="text"
+          enterKeyHint="done"
+          autoComplete="off"
+          autoCapitalize="characters"
+          spellCheck={false}
+        />
+        <div className={feedClass} aria-live="polite">
+          {feed.text}
+        </div>
+      </div>
+
+      <div className="grid-card">
+        <div className="grid-toolbar">
+          <strong style={{ fontSize: 13 }}>25 scan terakhir saya</strong>
+          <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--ink-label)' }}>
+            {fmtNumber(rows.length)} baris
+          </span>
+        </div>
+        <div className="table-scroll">
+          <table className="rtable">
+            <colgroup>
+              <col style={{ width: '46%' }} />
+              <col style={{ width: '16%' }} />
+              <col style={{ width: '20%' }} />
+              <col style={{ width: '18%' }} />
+            </colgroup>
+            <thead>
+              <tr>
+                <th>Resi</th>
+                <th>Ekspedisi</th>
+                <th>Jam</th>
+                <th>Aksi</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="muted" data-label="Info">
+                    Belum ada scan hari ini.
+                  </td>
+                </tr>
+              )}
+              {rows.map((r) => (
+                <tr key={r.id}>
+                  <td className="mono title" data-label="Resi">
+                    {r.resi}
+                  </td>
+                  <td data-label="Ekspedisi">
+                    <span className={`badge ${r.expedisi ? 'badge-brand' : 'badge-neutral'}`}>
+                      {r.expedisi?.code ?? 'BELUM DIKENALI'}
+                    </span>
+                  </td>
+                  <td className="mono" data-label="Jam">
+                    {fmtTime(r.scan1At)}
+                  </td>
+                  <td data-label="Aksi">
+                    <button type="button" className="btn btn-ghost btn-sm" onClick={() => void batalkan(r.id, r.resi)}>
+                      Batalkan
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}

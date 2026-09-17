@@ -1,0 +1,319 @@
+// Scan Manifest IEG — TiDB Serverless
+// CATATAN TiDB: relationMode="prisma" -> setiap kolom relasi WAJIB punya @@index.
+// PK selalu Int autoincrement: mengubah PK di TiDB (clustered index) hampir mustahil.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider     = "mysql"
+  url          = env("DATABASE_URL")
+  relationMode = "prisma"
+}
+
+enum Role {
+  ADMIN
+  SUPERVISOR
+  OPERATOR
+}
+
+enum BasketStatus {
+  OPEN
+  CLOSED
+  MANIFESTING
+  DONE
+}
+
+enum ItemStatus {
+  AWAITING_PICKUP
+  PICKUP
+  VOID
+}
+
+enum OcsState {
+  NONE
+  PENDING
+  SENT
+  FAILED
+  INVALID
+}
+
+enum DocStatus {
+  OPEN
+  SYNCING
+  SUBMITTED
+  FAILED
+  CANCELLED
+}
+
+enum OutboxStatus {
+  PENDING
+  RUNNING
+  DONE
+  FAILED
+}
+
+model User {
+  id                 Int      @id @default(autoincrement())
+  username           String   @unique @db.VarChar(64)
+  name               String   @db.VarChar(120)
+  passwordHash       String   @db.VarChar(255)
+  role               Role     @default(OPERATOR)
+  active             Boolean  @default(true)
+  mustChangePassword Boolean  @default(false)
+  ocsUserCode        String?  @db.VarChar(64)
+  lastLoginAt        DateTime?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  baskets      Basket[]      @relation("BasketCreatedBy")
+  sessions     ScanSession[] @relation("SessionUser")
+  scan1Items   ScanItem[]    @relation("Scan1By")
+  scan2Items   ScanItem[]    @relation("Scan2By")
+  voidedItems  ScanItem[]    @relation("VoidedBy")
+  docs         ManifestDoc[] @relation("DocCreatedBy")
+  manifestScans ManifestScan[] @relation("ManifestScanBy")
+  audits       AuditLog[]
+
+  @@index([active])
+  @@index([role])
+}
+
+model Expedisi {
+  id         Int      @id @default(autoincrement())
+  code       String   @unique @db.VarChar(32)
+  name       String   @db.VarChar(80)
+  ocsShipper String   @db.VarChar(40)
+  prefixes   String   @default("") @db.VarChar(1000)
+  active     Boolean  @default(true)
+  sortOrder  Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  baskets Basket[]
+  items   ScanItem[]
+
+  @@index([active])
+}
+
+model Basket {
+  id          Int          @id @default(autoincrement())
+  code        String       @unique @db.VarChar(48)
+  expedisiId  Int
+  areaId      String       @default("Pusat") @db.VarChar(40)
+  date        DateTime     @db.Date
+  seq         Int
+  status      BasketStatus @default(OPEN)
+  note        String?      @db.VarChar(255)
+  createdById Int
+  closedAt    DateTime?
+  printedAt   DateTime?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  expedisi  Expedisi      @relation(fields: [expedisiId], references: [id])
+  createdBy User          @relation("BasketCreatedBy", fields: [createdById], references: [id])
+  items     ScanItem[]
+  docs      ManifestDoc[]
+
+  @@unique([expedisiId, date, seq])
+  @@index([expedisiId])
+  @@index([createdById])
+  @@index([date])
+  @@index([status])
+  @@index([date, status])
+}
+
+model ScanItem {
+  id         Int        @id @default(autoincrement())
+  resi       String     @db.VarChar(64)
+  // Unik hanya selama aktif. Saat di-void diisi null supaya resi bisa discan ulang.
+  resiUnik   String?    @unique @db.VarChar(64)
+  // basketId diisi saat SCAN 2 (keranjang final dibentuk setelah sortir per ekspedisi)
+  basketId   Int?
+  // ekspedisi hasil tebakan prefix saat scan 1; dikoreksi ke ekspedisi basket saat scan 2
+  expedisiId Int?
+  sessionId  Int?
+  scanDate   DateTime   @db.Date
+  status     ItemStatus @default(AWAITING_PICKUP)
+
+  scan1At   DateTime  @default(now())
+  scan1ById Int
+  scan2At   DateTime?
+  scan2ById Int?
+
+  manifestDocId Int?
+  ocsState      OcsState @default(NONE)
+  ocsOrderId    String?  @db.VarChar(64)
+  ocsTracking   String?  @db.VarChar(64)
+  ocsReason     String?  @db.VarChar(191)
+  ocsSentAt     DateTime?
+
+  voidedAt   DateTime?
+  voidedById Int?
+  voidReason String?   @db.VarChar(191)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  basket   Basket?      @relation(fields: [basketId], references: [id])
+  expedisi Expedisi?    @relation(fields: [expedisiId], references: [id])
+  session  ScanSession? @relation(fields: [sessionId], references: [id])
+  scan1By  User         @relation("Scan1By", fields: [scan1ById], references: [id])
+  scan2By  User?        @relation("Scan2By", fields: [scan2ById], references: [id])
+  voidedBy User?        @relation("VoidedBy", fields: [voidedById], references: [id])
+  doc      ManifestDoc? @relation(fields: [manifestDocId], references: [id])
+
+  @@index([basketId])
+  @@index([expedisiId])
+  @@index([sessionId])
+  @@index([scan1ById])
+  @@index([scan2ById])
+  @@index([voidedById])
+  @@index([manifestDocId])
+  @@index([resi])
+  @@index([status])
+  @@index([scanDate])
+  @@index([scanDate, status])
+  @@index([ocsState])
+}
+
+// Sesi scan pertama: dibuat otomatis per operator per hari.
+// Hanya untuk pengelompokan & laporan — TIDAK dicetak dan tidak punya barcode.
+model ScanSession {
+  id        Int       @id @default(autoincrement())
+  code      String    @unique @db.VarChar(48)
+  date      DateTime  @db.Date
+  seq       Int
+  userId    Int
+  note      String?   @db.VarChar(255)
+  closedAt  DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  user  User       @relation("SessionUser", fields: [userId], references: [id])
+  items ScanItem[]
+
+  @@unique([date, seq])
+  @@index([userId])
+  @@index([date])
+}
+
+model ManifestDoc {
+  id          Int       @id @default(autoincrement())
+  basketId    Int
+  basketCode  String    @db.VarChar(48)
+  shipper     String    @db.VarChar(40)
+  areaId      String    @db.VarChar(40)
+  ocsDocId    Int?
+  ocsDocNo    String?   @db.VarChar(64)
+  status      DocStatus @default(OPEN)
+  totalValid    Int     @default(0)
+  totalNotValid Int     @default(0)
+  startedAt   DateTime  @default(now())
+  finishedAt  DateTime?
+  lastSyncAt  DateTime?
+  lastError   String?   @db.Text
+  createdById Int
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  basket    Basket         @relation(fields: [basketId], references: [id])
+  createdBy User           @relation("DocCreatedBy", fields: [createdById], references: [id])
+  items     ScanItem[]
+  scans     ManifestScan[]
+
+  @@index([basketId])
+  @@index([createdById])
+  @@index([status])
+  @@index([startedAt])
+  @@index([ocsDocId])
+}
+
+// Satu baris per scan di proses kedua — termasuk scan yang DITOLAK OCS,
+// yang tidak punya ScanItem (mis. resi tidak terdaftar di basket).
+model ManifestScan {
+  id               Int      @id @default(autoincrement())
+  docId            Int
+  scanResult       String   @db.VarChar(64)
+  manifestTime     DateTime
+  orderId          String?  @db.VarChar(64)
+  trackingNumber   String?  @db.VarChar(64)
+  shippingProvider String   @db.VarChar(40)
+  valid            Boolean  @default(true)
+  reason           String?  @db.VarChar(191)
+  itemId           Int?
+  scannedById      Int
+  syncedAt         DateTime?
+  createdAt        DateTime @default(now())
+
+  doc       ManifestDoc @relation(fields: [docId], references: [id])
+  scannedBy User        @relation("ManifestScanBy", fields: [scannedById], references: [id])
+
+  @@index([docId])
+  @@index([scannedById])
+  @@index([itemId])
+  @@index([valid])
+  @@index([syncedAt])
+}
+
+// Salinan daftar "order belum dimanifest" dari OCS saat dokumen dibuka.
+// Dipakai supaya validasi tiap scan cukup 1 query berindeks, tidak perlu
+// memanggil OCS per resi (persis pola aplikasi OCS sendiri).
+model ManifestCandidate {
+  id             Int      @id @default(autoincrement())
+  docId          Int
+  orderId        String   @db.VarChar(64)
+  trackingNumber String   @db.VarChar(64)
+  used           Boolean  @default(false)
+  createdAt      DateTime @default(now())
+
+  @@index([docId, trackingNumber])
+  @@index([docId, orderId])
+  @@index([docId, used])
+}
+
+model OcsOutbox {
+  id            Int          @id @default(autoincrement())
+  kind          String       @db.VarChar(40)
+  docId         Int?
+  payload       Json?
+  status        OutboxStatus @default(PENDING)
+  attempts      Int          @default(0)
+  lastError     String?      @db.Text
+  nextAttemptAt DateTime     @default(now())
+  createdAt     DateTime     @default(now())
+  doneAt        DateTime?
+
+  @@index([status, nextAttemptAt])
+  @@index([docId])
+}
+
+model Counter {
+  key       String   @id @db.VarChar(64)
+  value     Int      @default(0)
+  updatedAt DateTime @updatedAt
+}
+
+model Setting {
+  key       String   @id @db.VarChar(64)
+  value     String   @db.Text
+  updatedAt DateTime @updatedAt
+}
+
+model AuditLog {
+  id       Int      @id @default(autoincrement())
+  userId   Int?
+  action   String   @db.VarChar(64)
+  entity   String   @db.VarChar(40)
+  entityId String   @db.VarChar(64)
+  detail   Json?
+  at       DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([entity, entityId])
+  @@index([at])
+}

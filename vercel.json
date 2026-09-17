@@ -1,0 +1,5 @@
+{
+  "crons": [
+    { "path": "/api/cron/flush-outbox", "schedule": "*/10 * * * *" }
+  ]
+}
