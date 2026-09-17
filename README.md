@@ -64,8 +64,12 @@ npm run ocs:test -- "J&T" # sekalian hitung order yang belum dimanifest
    `OCS_PASSWORD`, `OCS_COMPANYDB`, `OCS_ENABLED`, `CRON_SECRET`.
 3. Build Command sudah benar (`prisma generate && next build` lewat script
    `build`).
-4. `vercel.json` sudah memasang cron `/api/cron/flush-outbox` tiap 10 menit —
-   inilah yang mengirim ulang antrean saat OCS sempat tidak bisa dihubungi.
+4. `vercel.json` memasang cron `/api/cron/flush-outbox` **sekali sehari 08.00 WIB**
+   (`0 1 * * *` UTC) — paket Hobby Vercel memang hanya mengizinkan cron harian.
+   Cron ini jaring pengaman terakhir, BUKAN pengirim utama: selama ada halaman
+   aplikasi terbuka, `/api/sync-status` yang dipanggil lonceng status tiap 30
+   detik ikut mengirim ulang antrean (throttle 20 detik). Jadi antrean tetap
+   terkirim dalam hitungan detik, bukan menunggu besok.
 5. Di TiDB Cloud, izinkan akses dari mana saja (`0.0.0.0/0`) atau daftarkan IP
    Vercel; tanpa itu koneksi dari fungsi serverless ditolak.
 
@@ -76,7 +80,7 @@ Tidak ada satu pun scan yang boleh hilang. Ada **dua lapis antrean**:
 | Lapis | Di mana | Kapan aktif | Pemulihan |
 |---|---|---|---|
 | Antrean perangkat | IndexedDB di PDT/PC | Jaringan ke server putus | Otomatis saat event `online`, saat tab kembali aktif, dan tiap 20 detik |
-| Outbox server | Tabel `ocs_outbox` di TiDB | OCS tidak bisa dihubungi | Cron tiap 10 menit + tombol "Kirim ulang ke OCS" |
+| Outbox server | Tabel `ocs_outbox` di TiDB | OCS tidak bisa dihubungi | Ikut terkirim tiap kali `/api/sync-status` dipanggil (tiap 30 detik dari halaman yang terbuka), tombol "Kirim ulang ke OCS", dan cron harian sebagai jaring terakhir |
 
 Di setiap halaman ada **banner status**: jaringan putus, jumlah scan yang masih
 menunggu di perangkat, dan jumlah data yang belum sama dengan OCS. Kalau scan

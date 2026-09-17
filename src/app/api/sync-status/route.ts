@@ -1,17 +1,43 @@
 import { prisma } from '@/lib/db';
 import { handle, requireUser } from '@/lib/api';
 import { ocsEnabled } from '@/server/ocs-client';
+import { flushOutbox } from '@/server/manifest-service';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+export const maxDuration = 30;
 
 /**
- * Dipakai lonceng status di topbar: apakah data kita sudah sama dengan OCS?
- * Angka > 0 di salah satu kolom berarti ADA SELISIH yang belum terkirim.
+ * Vercel paket Hobby hanya mengizinkan cron 1x sehari, jadi cron TIDAK bisa
+ * jadi satu-satunya pengirim ulang. Selama ada halaman terbuka, lonceng status
+ * memanggil endpoint ini tiap 30 detik — di sinilah antrean ikut dikirim ulang.
+ * Throttle 20 detik per instance supaya banyak PDT sekaligus tidak saling tabrak
+ * (baris outbox sendiri sudah dijaga status RUNNING).
  */
+const globalForFlush = globalThis as unknown as { __lastAutoFlush?: number };
+const JEDA_MS = 20000;
+
+async function autoFlush(pending: number) {
+  if (!pending || !ocsEnabled()) return null;
+  const now = Date.now();
+  if (globalForFlush.__lastAutoFlush && now - globalForFlush.__lastAutoFlush < JEDA_MS) return null;
+  globalForFlush.__lastAutoFlush = now;
+  try {
+    return await flushOutbox(5);
+  } catch {
+    return null;
+  }
+}
+
 export async function GET() {
   return handle(async () => {
     await requireUser();
+
+    const siapKirim = await prisma.ocsOutbox.count({
+      where: { status: 'PENDING', nextAttemptAt: { lte: new Date() } },
+    });
+    const autoFlushResult = await autoFlush(siapKirim);
+
     const [outboxPending, outboxFailed, docsBermasalah, scanBelumSinkron, itemPending] = await Promise.all([
       prisma.ocsOutbox.count({ where: { status: { in: ['PENDING', 'RUNNING'] } } }),
       prisma.ocsOutbox.count({ where: { status: 'FAILED' } }),
@@ -43,6 +69,7 @@ export async function GET() {
       docsBermasalah,
       selisih,
       sehat: selisih === 0,
+      autoFlush: autoFlushResult ? autoFlushResult.processed : 0,
       waktuServer: new Date().toISOString(),
     };
   });
