@@ -199,6 +199,12 @@ model ScanSession {
   date      DateTime  @db.Date
   seq       Int
   userId    Int
+  // Dipakai mode desktop (Serah Terima Dispatch): operator boleh berbeda
+  // dari akun yang login, dan shiftnya dicatat per batch.
+  operatorName String? @db.VarChar(120)
+  shift        String? @db.VarChar(32)
+  // Berapa kali resi dobel ditolak selama sesi ini — untuk KPI "Duplikat terdeteksi".
+  dupCount     Int     @default(0)
   note      String?   @db.VarChar(255)
   closedAt  DateTime?
   createdAt DateTime  @default(now())

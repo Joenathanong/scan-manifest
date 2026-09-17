@@ -5,6 +5,9 @@ import { apiGet, apiPost } from '@/lib/client';
 import { toast } from '@/components/Toast';
 import { clearQueue, flushQueue, subscribeQueue } from '@/lib/offline-queue';
 import { fmtDateTime, fmtNumber } from '@/lib/date';
+import { usePerangkat, type ModePerangkat } from '@/lib/device';
+import SoundToggle from '@/components/SoundToggle';
+import PopupToggle from '@/components/PopupToggle';
 
 type SyncStatus = {
   ocsAktif: boolean;
@@ -37,6 +40,7 @@ export default function SettingsPage() {
   const [expedisiId, setExpedisiId] = useState<number | ''>('');
   const [langkah, setLangkah] = useState<Langkah[] | null>(null);
   const [diagBusy, setDiagBusy] = useState(false);
+  const { jenis: perangkat, mode: modePerangkat, setMode: setModePerangkat } = usePerangkat();
 
   const muat = useCallback(async () => {
     const res = await apiGet<SyncStatus>('/api/sync-status');
@@ -220,6 +224,54 @@ export default function SettingsPage() {
             ))}
           </div>
         )}
+      </div>
+
+      <div className="card" style={{ display: 'grid', gap: 10 }}>
+        <strong style={{ fontSize: 14 }}>Perangkat, suara &amp; popup scan</strong>
+        <p style={{ fontSize: 13, color: 'var(--ink-label)', margin: 0 }}>
+          Sistem mengenali sendiri jenis perangkat dari lebar layar dan jenis penunjuknya: layar sentuh sempit
+          dianggap <strong>PDT/HP</strong>, layar lebar bermouse dianggap <strong>PC/laptop</strong>. Menu Scan 1
+          yang tidak sesuai perangkat disembunyikan. Setelan ini hanya berlaku di perangkat ini.
+        </p>
+
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+          <div style={{ minWidth: 220 }}>
+            <label className="field-label" htmlFor="mp">
+              Jenis perangkat
+            </label>
+            <select
+              id="mp"
+              className="select-field"
+              value={modePerangkat}
+              onChange={(e) => setModePerangkat(e.target.value as ModePerangkat)}
+            >
+              <option value="auto">Otomatis (terbaca: {perangkat === 'pdt' ? 'PDT / HP' : 'PC / laptop'})</option>
+              <option value="pdt">Paksa PDT / HP</option>
+              <option value="desktop">Paksa PC / laptop</option>
+            </select>
+          </div>
+          <div>
+            <span className="field-label">Suara scan</span>
+            <SoundToggle />
+          </div>
+          <div>
+            <span className="field-label">Popup hasil scan</span>
+            <PopupToggle />
+          </div>
+        </div>
+        <p style={{ fontSize: 12, color: 'var(--ink-muted)', margin: 0 }}>
+          Pola tetap sama di semua pilihan bunyi: <strong>berhasil</strong> naik dan pendek ·{' '}
+          <strong>dobel</strong> nada sama berulang · <strong>gagal</strong> turun, kasar, dan paling panjang —
+          jadi operator tetap bisa membedakannya tanpa melihat layar meski paketnya diganti. Mengganti pilihan
+          langsung memperdengarkan contohnya. Centang <strong>Ekstra keras</strong> untuk area dekat forklift atau
+          mesin sortir.
+        </p>
+        <p style={{ fontSize: 12, color: 'var(--ink-muted)', margin: 0 }}>
+          Popup hasil scan menutupi layar sekejap setiap kali scan: <strong>hijau</strong> berhasil,{' '}
+          <strong>kuning</strong> dobel, <strong>merah</strong> gagal — lengkap dengan nama ekspedisi dan nomor
+          resi, supaya terbaca dari jarak beberapa meter. Popup hilang sendiri dan tidak mengganggu fokus field
+          scan. Setelannya tersimpan di perangkat ini.
+        </p>
       </div>
 
       <div className="kpi-grid">

@@ -41,6 +41,36 @@ npm run db:seed        # 12 ekspedisi + user admin
 Seed mencetak password admin di terminal. Login pertama wajib menggantinya.
 Untuk password awal sendiri: `SEED_ADMIN_PASSWORD=xxxx npm run db:seed`.
 
+### Membuat 10 operator manifest sekaligus
+
+```bash
+npm run users:import                        # pratinjau
+npm run users:import -- --ya                # tulis ke database
+npm run users:import -- --ya --reset-password
+```
+
+Membuat `manifest001` … `manifest010` (role OPERATOR) beserta akun OCS
+`MANIFEST001` … `MANIFEST010`. Aman dijalankan berulang: tanpa
+`--reset-password`, password aplikasi pengguna yang sudah ada tidak diubah.
+
+**Penting:** password OCS dienkripsi memakai `SESSION_SECRET`. Jalankan skrip
+ini dengan `.env` yang `SESSION_SECRET`-nya SAMA dengan yang dipasang di
+Vercel, kalau tidak password OCS tidak bisa dibuka di produksi.
+
+### Mengosongkan data uji coba
+
+```bash
+npm run db:reset-data            # pratinjau: hanya menghitung, tidak menghapus
+npm run db:reset-data -- --ya    # HAPUS semua data transaksi
+```
+
+Yang dihapus: scan resi, sesi scan, basket, dokumen manifest, kandidat
+manifest, antrean outbox, dan nomor urut (penomoran basket kembali ke 001).
+Yang disimpan: **pengguna beserta akun OCS-nya**, master ekspedisi, dan setelan.
+Tambahkan `--audit` untuk ikut menghapus audit log, atau `--ekspedisi` untuk
+ikut menghapus master ekspedisi (setelah itu wajib `npm run db:seed`).
+Skrip meminta Anda mengetik ulang nama database sebelum menghapus.
+
 ## 2. Menjalankan
 
 ```bash

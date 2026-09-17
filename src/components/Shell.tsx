@@ -4,12 +4,15 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiPost } from '@/lib/client';
+import { usePerangkat, type JenisPerangkat } from '@/lib/device';
+import { pasangPembukaAudio } from '@/lib/audio';
 import { ToastHost } from './Toast';
 import SyncBanner from './SyncBanner';
 import {
   IconBasket,
   IconCollapse,
   IconDashboard,
+  IconDesktop,
   IconExpand,
   IconHistory,
   IconLogout,
@@ -35,6 +38,8 @@ type Item = {
   label: string;
   Icon: (p: { className?: string }) => React.JSX.Element;
   roles?: ShellUser['role'][];
+  /** Hanya tampil di jenis perangkat ini. Kosong = tampil di semuanya. */
+  perangkat?: JenisPerangkat;
 };
 type Group = { title: string; items: Item[] };
 
@@ -43,7 +48,8 @@ const MENU: Group[] = [
     title: 'Operasional',
     items: [
       { href: '/dashboard', label: 'Dashboard', Icon: IconDashboard },
-      { href: '/scan-1', label: 'Scan 1 — Resi', Icon: IconScan1 },
+      { href: '/scan-1', label: 'Scan 1 — PDT', Icon: IconScan1, perangkat: 'pdt' },
+      { href: '/scan-desktop', label: 'Scan 1 — Desktop', Icon: IconDesktop, perangkat: 'desktop' },
       { href: '/scan-2', label: 'Scan 2 — Manifest', Icon: IconScan2 },
       { href: '/basket', label: 'Basket', Icon: IconBasket },
     ],
@@ -71,9 +77,16 @@ export default function Shell({ user, children }: { user: ShellUser; children: R
   const [collapsed, setCollapsed] = useState(false);
   const [mode, setMode] = useState<Mode>('expanded');
   const [theme, setTheme] = useState<'morning' | 'evening'>('morning');
+  const { jenis: perangkat } = usePerangkat();
   const burgerRef = useRef<HTMLButtonElement>(null);
   const sideRef = useRef<HTMLElement>(null);
   const mainRef = useRef<HTMLElement>(null);
+
+  /* --- buka kunci audio sekali untuk seluruh aplikasi ---
+     Chrome membisukan WebAudio sampai ada gestur pengguna. Dipasang di sini,
+     bukan di tombol suara, supaya berlaku juga saat operator langsung menembak
+     barcode tanpa pernah menyentuh layar. */
+  useEffect(() => pasangPembukaAudio(), []);
 
   /* --- mode sidebar mengikuti lebar layar (§8) --- */
   useEffect(() => {
@@ -201,7 +214,13 @@ export default function Shell({ user, children }: { user: ShellUser; children: R
 
         <div className="side-nav">
           {MENU.map((group) => {
-            const items = group.items.filter((i) => !i.roles || i.roles.includes(user.role));
+            const items = group.items.filter(
+              (i) =>
+                (!i.roles || i.roles.includes(user.role)) &&
+                // Sebelum jenis perangkat terbaca, tampilkan semua supaya menu
+                // tidak berkedip hilang-muncul saat halaman baru dimuat.
+                (!i.perangkat || perangkat === null || i.perangkat === perangkat),
+            );
             if (!items.length) return null;
             return (
               <div key={group.title}>

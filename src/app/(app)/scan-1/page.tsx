@@ -5,6 +5,11 @@ import { apiGet, apiPost } from '@/lib/client';
 import { playForTone, vibrate } from '@/lib/audio';
 import { sendOrQueue } from '@/lib/offline-queue';
 import { toast } from '@/components/Toast';
+import SoundToggle from '@/components/SoundToggle';
+import PopupToggle from '@/components/PopupToggle';
+import PerangkatHint from '@/components/PerangkatHint';
+import ScanFlash, { kunciFlash, type FlashData } from '@/components/ScanFlash';
+import { popupAktif } from '@/lib/scan-prefs';
 import { fmtNumber, fmtTime } from '@/lib/date';
 
 type Scan1Result = {
@@ -33,7 +38,17 @@ export default function Scan1Page() {
   const [totalSaya, setTotalSaya] = useState(0);
   const [totalHariIni, setTotalHariIni] = useState(0);
   const [antreanLokal, setAntreanLokal] = useState<string[]>([]);
+  const [flash, setFlash] = useState<FlashData | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Popup layar penuh hanya muncul kalau setelannya menyala di perangkat ini.
+  const tampilkanFlash = useCallback(
+    (tone: FlashData['tone'], ekspedisi: string, status: string, resi: string) => {
+      if (!popupAktif()) return;
+      setFlash({ tone, ekspedisi, status, resi, key: kunciFlash() });
+    },
+    [],
+  );
 
   const muat = useCallback(async () => {
     const res = await apiGet<{ rows: Row[]; totalSaya: number; totalHariIni: number }>('/api/scan1?take=25');
@@ -68,6 +83,14 @@ export default function Scan1Page() {
       setFeed({ tone: 'double', text: `${resi} sudah discan di perangkat ini.` });
       playForTone('double');
       vibrate([60, 60, 60]);
+      // Ekspedisi diambil dari daftar scan yang sudah tampil, supaya dobel
+      // lokal tetap menyebut nama ekspedisinya walau jaringan mati.
+      tampilkanFlash(
+        'double',
+        rows.find((r) => r.resi === resi)?.expedisi?.code ?? 'DOBEL',
+        'SUDAH DISCAN DI PERANGKAT INI',
+        resi,
+      );
       return;
     }
 
@@ -78,12 +101,14 @@ export default function Scan1Page() {
       setFeed({ tone: 'queued', text: `${resi} masuk antrean — jaringan sedang putus.` });
       playForTone('success');
       vibrate(40);
+      tampilkanFlash('double', 'ANTREAN OFFLINE', 'TERSIMPAN — DIKIRIM SAAT JARINGAN KEMBALI', resi);
       return;
     }
     if (res.error || !res.data) {
       setFeed({ tone: 'failed', text: res.error ?? 'Gagal menyimpan.' });
       playForTone('failed');
       vibrate([120, 60, 120]);
+      tampilkanFlash('failed', 'GAGAL', res.error ?? 'GAGAL MENYIMPAN', resi);
       return;
     }
 
@@ -92,6 +117,16 @@ export default function Scan1Page() {
     setFeed({ tone: data.tone, text: data.message });
     playForTone(data.tone);
     vibrate(data.tone === 'success' ? 40 : [120, 60, 120]);
+    tampilkanFlash(
+      data.tone,
+      data.expedisi ?? 'BELUM DIKENALI',
+      data.status === 'OK'
+        ? 'BERHASIL — MENUNGGU PICKUP'
+        : data.status === 'DOUBLE'
+          ? 'SUDAH PERNAH DISCAN'
+          : data.message,
+      data.resi,
+    );
     setTotalHariIni(data.totalHariIni);
     if (data.status === 'OK') {
       setTotalSaya((n) => n + 1);
@@ -145,10 +180,18 @@ export default function Scan1Page() {
         </div>
       </div>
 
+      <PerangkatHint untuk="pdt" />
+
       <div className="card" style={{ display: 'grid', gap: 10 }}>
-        <label className="field-label" htmlFor="scan">
-          Resi
-        </label>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <label className="field-label" htmlFor="scan" style={{ margin: 0 }}>
+            Resi
+          </label>
+          <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <SoundToggle ringkas />
+            <PopupToggle ringkas />
+          </span>
+        </div>
         <input
           id="scan"
           ref={inputRef}
@@ -228,6 +271,8 @@ export default function Scan1Page() {
           </table>
         </div>
       </div>
+
+      <ScanFlash data={flash} onSelesai={() => setFlash(null)} />
     </div>
   );
 }

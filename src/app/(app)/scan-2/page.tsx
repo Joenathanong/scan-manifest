@@ -8,6 +8,10 @@ import { sendOrQueue } from '@/lib/offline-queue';
 import { toast } from '@/components/Toast';
 import { fmtNumber, fmtTime } from '@/lib/date';
 import { IconPlus, IconPrint } from '@/components/Icons';
+import SoundToggle from '@/components/SoundToggle';
+import PopupToggle from '@/components/PopupToggle';
+import ScanFlash, { kunciFlash, type FlashData } from '@/components/ScanFlash';
+import { popupAktif } from '@/lib/scan-prefs';
 
 type Expedisi = { id: number; code: string; name: string; ocsShipper: string; active: boolean };
 
@@ -95,6 +99,7 @@ export default function Scan2Page() {
     text: 'Scan resi untuk masuk ke basket ini.',
   });
   const [busy, setBusy] = useState(false);
+  const [flash, setFlash] = useState<FlashData | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -240,10 +245,17 @@ export default function Scan2Page() {
     }
   };
 
+  // Popup layar penuh hanya muncul kalau setelannya menyala di perangkat ini.
+  const tampilkanFlash = (tone: FlashData['tone'], ekspedisi: string, status: string, resi: string) => {
+    if (!popupAktif()) return;
+    setFlash({ tone, ekspedisi, status, resi, key: kunciFlash() });
+  };
+
   const kirim = async (raw: string) => {
     const resi = raw.trim().toUpperCase();
     if (!resi || !sesi) return;
     setValue('');
+    const namaEkspedisi = sesi.expedisi.code;
 
     const res = await sendOrQueue<Scan2Result>('scan2', '/api/scan2/scan', { docId: sesi.docId, resi }, resi);
 
@@ -251,18 +263,32 @@ export default function Scan2Page() {
       setFeed({ tone: 'double', text: `${resi} masuk antrean — jaringan sedang putus.` });
       playForTone('success');
       vibrate(40);
+      tampilkanFlash('double', namaEkspedisi, 'MASUK ANTREAN — JARINGAN PUTUS', resi);
       return;
     }
     if (res.error || !res.data) {
       setFeed({ tone: 'failed', text: res.error ?? 'Gagal.' });
       playForTone('failed');
       vibrate([120, 60, 120]);
+      tampilkanFlash('failed', namaEkspedisi, res.error ?? 'GAGAL MENYIMPAN', resi);
       return;
     }
     const data = res.data;
     setFeed({ tone: data.tone, text: data.message });
     playForTone(data.tone);
     vibrate(data.tone === 'success' ? 40 : [120, 60, 120]);
+    tampilkanFlash(
+      data.tone,
+      namaEkspedisi,
+      data.status === 'OK'
+        ? `MASUK BASKET ${sesi.basket.code}`
+        : data.status === 'DOUBLE'
+          ? 'SUDAH ADA DI BASKET INI'
+          : data.status === 'NOT_IN_SCAN1'
+            ? 'BELUM DISCAN DI SCAN 1'
+            : data.reason || data.message,
+      data.resi,
+    );
     void muatState(sesi.docId);
   };
 
@@ -561,9 +587,15 @@ export default function Scan2Page() {
       </div>
 
       <div className="card" style={{ display: 'grid', gap: 10 }}>
-        <label className="field-label" htmlFor="scan2">
-          Resi
-        </label>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <label className="field-label" htmlFor="scan2" style={{ margin: 0 }}>
+            Resi
+          </label>
+          <span style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <SoundToggle ringkas />
+            <PopupToggle ringkas />
+          </span>
+        </div>
         <input
           id="scan2"
           ref={inputRef}
@@ -655,6 +687,8 @@ export default function Scan2Page() {
           </table>
         </div>
       </div>
+
+      <ScanFlash data={flash} onSelesai={() => setFlash(null)} />
     </div>
   );
 }

@@ -631,3 +631,203 @@ body {
   .label-sheet { box-shadow: none; border: 0; margin: 0; padding: 0; }
   @page { size: 58mm auto; margin: 2mm; }
 }
+
+/* =========================================================================
+   Mode Desktop "Serah Terima Dispatch" — meniru tampilan Apps Script lama
+   supaya operator tidak perlu belajar ulang. Semua kelas diawali .disp-
+   dan warnanya dikunci sendiri, jadi tidak ikut tema Morning/Evening dan
+   tidak mempengaruhi halaman lain.
+   ========================================================================= */
+.disp {
+  --navy: #1f4e8c;
+  --navy-dark: #143a6b;
+  --navy-ink: #16305c;
+  --kuning: #ffc93c;
+  --kuning-dark: #e8b21f;
+  --hijau: #1e874b;
+  --oranye: #e8890c;
+  --biru: #2f6fd0;
+  --kertas: #eef1f6;
+  --garis: #d7dee9;
+  --abu: #6b7a90;
+
+  background: var(--kertas);
+  color: #1b2735;
+  margin: calc(var(--pad-page) * -1);
+  padding: 0 0 20px;
+  min-height: 100%;
+  font-size: 13px;
+}
+
+.disp-top {
+  background: var(--navy);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 16px;
+}
+.disp-brand { font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+.disp-top .disp-spacer { margin-left: auto; }
+.disp-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: rgba(255, 255, 255, .14);
+  border: 1px solid rgba(255, 255, 255, .22);
+  color: #fff; border-radius: 999px; padding: 6px 12px;
+  font-size: 12px; font-weight: 600; cursor: pointer; text-decoration: none;
+}
+.disp-pill:hover { background: rgba(255, 255, 255, .24); }
+.disp-pill-kuning { background: var(--kuning); border-color: var(--kuning); color: var(--navy-ink); }
+.disp-pill-kuning:hover { background: var(--kuning-dark); }
+.disp-jam { font-size: 12px; color: rgba(255, 255, 255, .8); }
+
+.disp-meta {
+  background: var(--navy-dark);
+  color: rgba(255, 255, 255, .85);
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 8px 16px; font-size: 12px;
+}
+.disp-meta strong { color: #fff; }
+.disp-meta .disp-spacer { margin-left: auto; }
+
+.disp-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  border: 0; border-radius: 6px; padding: 7px 14px;
+  font-size: 12.5px; font-weight: 700; cursor: pointer; white-space: nowrap;
+}
+.disp-btn:disabled { opacity: .55; cursor: not-allowed; }
+.disp-btn-kuning { background: var(--kuning); color: var(--navy-ink); }
+.disp-btn-kuning:hover:not(:disabled) { background: var(--kuning-dark); }
+.disp-btn-hijau { background: var(--hijau); color: #fff; }
+.disp-btn-navy { background: var(--navy); color: #fff; }
+.disp-btn-putih { background: rgba(255, 255, 255, .16); color: #fff; border: 1px solid rgba(255, 255, 255, .3); }
+
+.disp-body { padding: 14px 16px; display: grid; gap: 14px; }
+
+.disp-kpi { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+.disp-tile {
+  background: #fff; border: 1px solid var(--garis); border-radius: 10px;
+  border-top: 3px solid var(--biru); padding: 12px 14px;
+}
+.disp-tile[data-warna='hijau'] { border-top-color: var(--hijau); }
+.disp-tile[data-warna='oranye'] { border-top-color: var(--oranye); }
+.disp-tile[data-warna='navy'] { border-top-color: var(--navy); }
+.disp-tile-label { font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: var(--abu); }
+.disp-tile-angka { font-size: 30px; font-weight: 800; color: var(--navy-ink); line-height: 1.1; font-variant-numeric: tabular-nums; }
+.disp-tile-ket { font-size: 11.5px; color: var(--abu); margin-top: 2px; }
+.disp-chip {
+  display: inline-block; margin-top: 6px; padding: 3px 9px; border-radius: 999px;
+  font-size: 11px; font-weight: 700; background: #e8f0fb; color: var(--navy);
+}
+.disp-chip[data-warna='hijau'] { background: #e4f4ea; color: var(--hijau); }
+.disp-chip[data-warna='kuning'] { background: #fff3d4; color: #8a6200; }
+.disp-bar { height: 6px; border-radius: 999px; background: #e3e8f0; overflow: hidden; margin: 8px 0 4px; }
+.disp-bar > span { display: block; height: 100%; background: var(--biru); }
+
+.disp-card { background: #fff; border: 1px solid var(--garis); border-radius: 10px; overflow: hidden; }
+.disp-card-head {
+  background: var(--navy); color: #fff;
+  display: flex; align-items: center; gap: 8px;
+  padding: 9px 14px; font-size: 12px; font-weight: 700;
+  letter-spacing: .04em; text-transform: uppercase;
+}
+.disp-card-head .disp-spacer { margin-left: auto; }
+.disp-badge {
+  background: rgba(255, 255, 255, .18); border: 1px solid rgba(255, 255, 255, .28);
+  border-radius: 999px; padding: 2px 10px; font-size: 11px; font-weight: 700; letter-spacing: 0;
+}
+.disp-card-body { padding: 14px; }
+
+.disp-scan-input {
+  width: 100%; height: 48px; padding: 0 42px 0 14px;
+  border: 2px solid var(--biru); border-radius: 8px;
+  font-size: 16px; color: #1b2735; background: #fff;
+}
+.disp-scan-input::placeholder { color: #9aa7b8; }
+.disp-scan-input:focus { outline: none; box-shadow: 0 0 0 3px rgba(47, 111, 208, .18); }
+.disp-scan-wrap { position: relative; }
+.disp-scan-wrap > span {
+  position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
+  font-size: 18px; pointer-events: none;
+}
+
+.disp-mini { display: grid; gap: 10px; grid-template-columns: 1fr 1fr; margin-top: 10px; }
+.disp-mini > div { background: #f6f8fb; border: 1px solid var(--garis); border-radius: 8px; padding: 8px 12px; }
+.disp-mini-label { font-size: 10.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--navy); }
+.disp-mini-nilai { font-size: 15px; font-weight: 700; color: var(--navy-ink); }
+.disp-bantu { font-size: 11.5px; color: var(--abu); margin-top: 10px; line-height: 1.5; }
+
+.disp-feed { border-radius: 8px; padding: 10px 12px; font-size: 14px; font-weight: 700; margin-top: 10px; }
+.disp-feed[data-nada='idle'] { background: #f6f8fb; color: var(--abu); border: 1px solid var(--garis); }
+.disp-feed[data-nada='success'] { background: #e4f4ea; color: #146c39; border: 1px solid #a9d9bd; }
+.disp-feed[data-nada='double'] { background: #fff3d4; color: #8a6200; border: 1px solid #f0d089; }
+.disp-feed[data-nada='failed'] { background: #fde8e8; color: #a11212; border: 1px solid #f0b4b4; }
+
+.disp-list { max-height: 260px; overflow-y: auto; }
+.disp-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 14px; border-bottom: 1px solid #eef1f6; font-size: 12.5px;
+}
+.disp-row:last-child { border-bottom: 0; }
+.disp-no { font-weight: 800; color: var(--navy); min-width: 34px; font-variant-numeric: tabular-nums; }
+.disp-resi { font-family: var(--font-mono); font-weight: 700; color: #1b2735; }
+.disp-tag {
+  border-radius: 999px; padding: 2px 9px; font-size: 10.5px; font-weight: 800;
+  background: #e8f0fb; color: var(--navy);
+}
+.disp-tag[data-warna='hijau'] { background: #e4f4ea; color: var(--hijau); }
+.disp-tag[data-warna='kuning'] { background: #fff3d4; color: #8a6200; }
+.disp-tag[data-warna='abu'] { background: #eceff4; color: var(--abu); }
+.disp-jam-kecil { color: var(--abu); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+
+.disp-tabel { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.disp-tabel th {
+  text-align: left; padding: 9px 14px; background: #f6f8fb;
+  border-bottom: 1px solid var(--garis); color: var(--abu);
+  font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+}
+.disp-tabel td { padding: 8px 14px; border-bottom: 1px solid #eef1f6; }
+.disp-tabel tr:hover td { background: #f8fafd; }
+
+.disp-kolom { display: grid; gap: 14px; grid-template-columns: minmax(320px, 38%) 1fr; align-items: start; }
+@media (max-width: 1023.98px) {
+  .disp-kolom { grid-template-columns: 1fr; }
+  .disp-mini { grid-template-columns: 1fr; }
+}
+
+/* ---------------- Kilat hasil scan (layar penuh sekejap) ---------------- */
+.scan-flash {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  display: grid;
+  place-items: center;
+  text-align: center;
+  color: #fff;
+  /* Tidak menangkap klik/fokus: field scan tetap siap menerima scan berikutnya. */
+  pointer-events: none;
+  padding: 24px;
+  animation: scan-flash-masuk .1s ease-out;
+}
+.scan-flash[data-tone='success'] { background: rgba(20, 118, 60, .97); }
+.scan-flash[data-tone='double'] { background: rgba(176, 116, 0, .97); }
+.scan-flash[data-tone='failed'] { background: rgba(166, 20, 20, .97); }
+.scan-flash-ikon { font-size: clamp(40px, 6vw, 72px); line-height: 1; font-weight: 900; opacity: .9; }
+.scan-flash-exp {
+  font-size: clamp(34px, 7vw, 96px);
+  font-weight: 900;
+  line-height: 1.05;
+  letter-spacing: -.02em;
+  margin-top: 8px;
+}
+.scan-flash-status { font-size: clamp(16px, 2.6vw, 32px); font-weight: 700; margin-top: 6px; opacity: .95; }
+.scan-flash-resi {
+  font-family: var(--font-mono);
+  font-size: clamp(14px, 1.8vw, 22px);
+  margin-top: 14px;
+  opacity: .85;
+  word-break: break-all;
+}
+@keyframes scan-flash-masuk { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .scan-flash { animation: none; } }

@@ -164,3 +164,38 @@ export const IconPlus = (p: P) => (
     <path d="M12 5v14M5 12h14" />
   </Svg>
 );
+
+export const IconDesktop = (p: P) => (
+  <Svg className={p.className}>
+    <rect x="3" y="4" width="18" height="12" rx="2" />
+    <path d="M9 20h6M12 16v4" />
+  </Svg>
+);
+
+export const IconSpeaker = (p: P) => (
+  <Svg className={p.className}>
+    <path d="M4 9.5h3l4.5-3.6v12.2L7 14.5H4z" />
+    <path d="M15.5 9.4a3.7 3.7 0 0 1 0 5.2M18.2 7a7.4 7.4 0 0 1 0 10" />
+  </Svg>
+);
+
+export const IconSpeakerOff = (p: P) => (
+  <Svg className={p.className}>
+    <path d="M4 9.5h3l4.5-3.6v12.2L7 14.5H4z" />
+    <path d="m16.2 9.8 4.4 4.4M20.6 9.8l-4.4 4.4" />
+  </Svg>
+);
+
+export const IconFlash = (p: P) => (
+  <Svg className={p.className}>
+    <rect x="3" y="4" width="18" height="16" rx="2.5" />
+    <path d="M12.6 8.2 9.8 12.4h2.8l-1 3.4 3-4.4h-2.8z" />
+  </Svg>
+);
+
+export const IconFlashOff = (p: P) => (
+  <Svg className={p.className}>
+    <rect x="3" y="4" width="18" height="16" rx="2.5" />
+    <path d="m4.5 19.5 15-15" />
+  </Svg>
+);

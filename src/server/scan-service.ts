@@ -72,25 +72,34 @@ export async function scanFirst(user: SessionUser, rawResi: string): Promise<Sca
     };
   }
 
+  const { rules, byCode } = await expedisiRules();
+  const code = detectExpedisi(resi, rules);
+
   const existing = await prisma.scanItem.findUnique({
     where: { resiUnik: resi },
-    include: { scan1By: { select: { name: true } }, basket: { select: { code: true } } },
+    include: {
+      scan1By: { select: { name: true } },
+      basket: { select: { code: true } },
+      expedisi: { select: { code: true } },
+    },
   });
   if (existing) {
     const when = existing.status === 'PICKUP' ? 'sudah dimanifest' : 'sudah discan';
+    await catatDuplikat(user.id);
     return {
       status: 'DOUBLE',
       tone: 'double',
       message: `${resi} ${when} oleh ${existing.scan1By.name}.`,
       resi,
-      expedisi: null,
+      // Ekspedisi diambil dari baris yang sudah tersimpan; kalau baris lama
+      // belum sempat dikenali, dicoba lagi dari pola resi supaya popup dobel
+      // tidak menampilkan "BELUM DIKENALI" padahal ekspedisinya jelas.
+      expedisi: (existing as { expedisi: { code: string } | null }).expedisi?.code ?? code,
       itemId: existing.id,
       totalHariIni: await countAwaitingToday(iso),
     };
   }
 
-  const { rules, byCode } = await expedisiRules();
-  const code = detectExpedisi(resi, rules);
   const expedisiId = code ? byCode.get(code) ?? null : null;
   const session = await getOrCreateSession(user.id, iso);
 
@@ -117,6 +126,7 @@ export async function scanFirst(user: SessionUser, rawResi: string): Promise<Sca
     };
   } catch (e) {
     if (isUniqueViolation(e)) {
+      await catatDuplikat(user.id);
       return {
         status: 'DOUBLE',
         tone: 'double',
@@ -130,10 +140,132 @@ export async function scanFirst(user: SessionUser, rawResi: string): Promise<Sca
   }
 }
 
+/** Buka batch scan baru (mode desktop) — sesi lama milik operator ditutup. */
+export async function bukaSesi(
+  user: SessionUser,
+  params: { shift?: string | null; operatorName?: string | null },
+) {
+  const iso = todayISO();
+  const date = dateOnly(iso);
+
+  await prisma.scanSession.updateMany({
+    where: { userId: user.id, closedAt: null },
+    data: { closedAt: new Date() },
+  });
+
+  const seq = await nextSeq(`session:${iso}`);
+  const code = `S-${compactDate(iso)}-${String(seq).padStart(3, '0')}`;
+  return prisma.scanSession.create({
+    data: {
+      code,
+      date,
+      seq,
+      userId: user.id,
+      operatorName: params.operatorName?.slice(0, 120) || user.name,
+      shift: params.shift?.slice(0, 32) || null,
+    },
+  });
+}
+
+export async function tutupSesi(user: SessionUser) {
+  const { count } = await prisma.scanSession.updateMany({
+    where: { userId: user.id, closedAt: null },
+    data: { closedAt: new Date() },
+  });
+  await writeAudit(user.id, 'CLOSE_SESSION', 'ScanSession', user.id, { jumlah: count });
+  return { ditutup: count };
+}
+
+/** Sesi aktif + seluruh angka yang dipakai layar desktop. */
+export async function statusSesi(user: SessionUser, take = 300) {
+  const iso = todayISO();
+  const sesi = await prisma.scanSession.findFirst({
+    where: { userId: user.id, closedAt: null },
+    orderBy: { id: 'desc' },
+  });
+
+  if (!sesi) {
+    return {
+      sesi: null,
+      rows: [],
+      total: 0,
+      dupCount: 0,
+      jenisEkspedisi: [] as string[],
+      totalHariIni: await countAwaitingToday(iso),
+      tanggal: iso,
+    };
+  }
+
+  type Row = {
+    id: number;
+    resi: string;
+    status: string;
+    scan1At: Date;
+    expedisi: { code: string; name: string } | null;
+  };
+
+  const [rows, total] = await Promise.all([
+    prisma.scanItem.findMany({
+      where: { sessionId: sesi.id, status: { not: 'VOID' } },
+      orderBy: { id: 'desc' },
+      take,
+      select: {
+        id: true,
+        resi: true,
+        status: true,
+        scan1At: true,
+        expedisi: { select: { code: true, name: true } },
+      },
+    }),
+    prisma.scanItem.count({ where: { sessionId: sesi.id, status: { not: 'VOID' } } }),
+  ]);
+
+  const daftar = rows as Row[];
+  const jenis = [...new Set(daftar.map((r) => r.expedisi?.code ?? 'LAINNYA'))];
+
+  return {
+    sesi: {
+      id: sesi.id,
+      code: sesi.code,
+      operatorName: sesi.operatorName ?? user.name,
+      shift: sesi.shift,
+      mulai: sesi.createdAt.toISOString(),
+      dupCount: sesi.dupCount,
+    },
+    rows: daftar.map((r) => ({
+      id: r.id,
+      resi: r.resi,
+      status: r.status,
+      jam: r.scan1At.toISOString(),
+      ekspedisi: r.expedisi?.code ?? null,
+      ekspedisiNama: r.expedisi?.name ?? null,
+    })),
+    total,
+    dupCount: sesi.dupCount,
+    jenisEkspedisi: jenis,
+    totalHariIni: await countAwaitingToday(iso),
+    tanggal: iso,
+  };
+}
+
 export function countAwaitingToday(iso = todayISO()) {
   return prisma.scanItem.count({
     where: { scanDate: dateOnly(iso), status: 'AWAITING_PICKUP' },
   });
+}
+
+/** Tambah hitungan duplikat pada sesi yang sedang terbuka. Gagal di sini tidak boleh menghentikan scan. */
+async function catatDuplikat(userId: number) {
+  try {
+    const sesi = await prisma.scanSession.findFirst({
+      where: { userId, closedAt: null },
+      orderBy: { id: 'desc' },
+      select: { id: true },
+    });
+    if (sesi) await prisma.scanSession.update({ where: { id: sesi.id }, data: { dupCount: { increment: 1 } } });
+  } catch {
+    /* abaikan */
+  }
 }
 
 export async function voidItem(user: SessionUser, itemId: number, reason: string) {
