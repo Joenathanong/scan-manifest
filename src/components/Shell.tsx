@@ -239,8 +239,8 @@ export default function Shell({ user, children }: { user: ShellUser; children: R
           </div>
           <button
             type="button"
-            className="btn btn-ghost collapse-btn"
-            style={{ width: 36, height: 36, padding: 0 }}
+            className="icon-btn collapse-btn"
+            style={{ width: 36, height: 36 }}
             onClick={toggleCollapse}
             disabled={mode === 'drawer'}
             aria-label={collapsed ? 'Lebarkan menu' : 'Ciutkan menu'}
@@ -257,35 +257,35 @@ export default function Shell({ user, children }: { user: ShellUser; children: R
         <button
           ref={burgerRef}
           type="button"
-          className="btn btn-ghost"
-          style={{ width: 48, height: 48, padding: 0, display: mode === 'drawer' ? 'inline-flex' : 'none' }}
+          className="icon-btn"
+          style={{ display: mode === 'drawer' ? 'inline-grid' : 'none' }}
           aria-expanded={drawer}
           aria-controls="side"
           aria-label="Buka menu"
           onClick={() => setDrawer((d) => !d)}
         >
-          <IconMenu className="ico" />
+          <IconMenu className="ico ico-lg" />
         </button>
         <span style={{ fontSize: 15, fontWeight: 600, flex: 1, minWidth: 0 }}>{currentTitle}</span>
         <button
           type="button"
-          className="btn btn-ghost"
-          style={{ width: 40, height: 40, padding: 0 }}
+          className="icon-btn"
+          data-tone="brand"
           onClick={toggleTheme}
           aria-label={theme === 'evening' ? 'Ganti ke tema Morning' : 'Ganti ke tema Evening'}
-          title={theme === 'evening' ? 'Tema Morning' : 'Tema Evening'}
+          title={theme === 'evening' ? 'Tema Morning (terang)' : 'Tema Evening (gelap)'}
         >
-          {theme === 'evening' ? <IconSun className="ico" /> : <IconMoon className="ico" />}
+          {theme === 'evening' ? <IconSun className="ico ico-lg" /> : <IconMoon className="ico ico-lg" />}
         </button>
         <button
           type="button"
-          className="btn btn-ghost"
-          style={{ width: 40, height: 40, padding: 0 }}
+          className="icon-btn"
+          data-tone="danger"
           onClick={logout}
           aria-label="Keluar"
           title="Keluar"
         >
-          <IconLogout className="ico" />
+          <IconLogout className="ico ico-lg" />
         </button>
       </header>
 

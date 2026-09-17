@@ -9,7 +9,7 @@ function Svg({ children, className }: { children: React.ReactNode; className?: s
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
-      strokeWidth="1.8"
+      strokeWidth="1.7"
       strokeLinecap="round"
       strokeLinejoin="round"
       aria-hidden="true"
@@ -82,39 +82,41 @@ export const IconSettings = (p: P) => (
 
 export const IconSun = (p: P) => (
   <Svg className={p.className}>
-    <circle cx="12" cy="12" r="4" />
-    <path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4" />
+    <circle cx="12" cy="12" r="4.2" />
+    <path d="M12 2.8v2.1M12 19.1v2.1M2.8 12h2.1M19.1 12h2.1" />
+    <path d="M5.4 5.4l1.5 1.5M17.1 17.1l1.5 1.5M18.6 5.4l-1.5 1.5M6.9 17.1l-1.5 1.5" />
   </Svg>
 );
 
 export const IconMoon = (p: P) => (
   <Svg className={p.className}>
-    <path d="M20 14.5A8.2 8.2 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5Z" />
+    <path d="M20.6 14.1A8.9 8.9 0 0 1 9.9 3.4 8.6 8.6 0 1 0 20.6 14.1Z" />
   </Svg>
 );
 
 export const IconMenu = (p: P) => (
   <Svg className={p.className}>
-    <path d="M4 7h16M4 12h16M4 17h16" />
+    <path d="M4 7h16M4 12h16M4 17h11" />
   </Svg>
 );
 
 export const IconLogout = (p: P) => (
   <Svg className={p.className}>
-    <path d="M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4" />
-    <path d="M10 8l-4 4 4 4M6 12h10" />
+    <path d="M10 4H6.6A2.6 2.6 0 0 0 4 6.6v10.8A2.6 2.6 0 0 0 6.6 20H10" />
+    <path d="M15.6 8.4 19.2 12l-3.6 3.6" />
+    <path d="M19.2 12H9.6" />
   </Svg>
 );
 
 export const IconCollapse = (p: P) => (
   <Svg className={p.className}>
-    <path d="M14 7l-5 5 5 5" />
+    <path d="M14.5 6.8 9.3 12l5.2 5.2" />
   </Svg>
 );
 
 export const IconExpand = (p: P) => (
   <Svg className={p.className}>
-    <path d="M10 7l5 5-5 5" />
+    <path d="M9.5 6.8 14.7 12l-5.2 5.2" />
   </Svg>
 );
 

@@ -225,7 +225,7 @@ body {
     font-weight: 600;
   }
   .nav-item .lbl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .nav-item .ico { flex: none; width: 18px; height: 18px; }
+  .nav-item .ico { width: 18px; height: 18px; }
   .nav-mark {
     position: absolute;
     inset-block: 4px;
@@ -278,7 +278,39 @@ body {
   }
   .app-shell[data-drawer="open"] .backdrop { opacity: 1; pointer-events: auto; }
   @media (min-width: 768px) { .backdrop { display: none; } }
-  @media (prefers-reduced-motion: reduce) { .app-side, .backdrop { transition: none; } }
+  @media (prefers-reduced-motion: reduce) { .app-side, .backdrop, .icon-btn { transition: none; } }
+
+  /* Ikon SVG selalu punya ukuran eksplisit — tanpa ini browser memakai
+     kotak bawaan 300x150 dan ikonnya tampak gepeng. */
+  .ico { width: 18px; height: 18px; flex: none; display: block; }
+  .ico-lg { width: 20px; height: 20px; }
+
+  /* Tombol ikon di topbar & toolbar */
+  .icon-btn {
+    display: inline-grid;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    flex: none;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: 10px;
+    background: transparent;
+    color: var(--ink-label);
+    cursor: pointer;
+    transition: background .14s ease, color .14s ease, border-color .14s ease;
+  }
+  .icon-btn:hover {
+    background: var(--bg-hover);
+    color: var(--ink);
+    border-color: var(--border-subtle);
+  }
+  .icon-btn:active { background: var(--bg-selected); }
+  .icon-btn:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+  .icon-btn[data-tone="brand"]:hover { color: var(--primary); background: var(--primary-subtle); border-color: var(--primary-border); }
+  .icon-btn[data-tone="danger"]:hover { color: var(--negative); background: var(--negative-bg); border-color: var(--negative-border); }
+  .icon-btn:disabled { opacity: .45; cursor: not-allowed; background: transparent; border-color: transparent; }
+  @media (max-width: 767.98px) { .icon-btn { width: 44px; height: 44px; } }
 
   /* ---------------- Topbar (§11.3) ---------------- */
   .app-top {
