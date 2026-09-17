@@ -13,10 +13,12 @@
     "db:studio": "prisma studio",
     "db:seed": "node prisma/seed.mjs",
     "db:collation": "node --env-file=.env tools/fix-collation.mjs",
-    "ocs:test": "node --env-file=.env tools/ocs-test.mjs"
+    "ocs:test": "node --env-file=.env tools/ocs-test.mjs",
+    "user:password": "node --env-file=.env tools/set-password.mjs"
   },
   "dependencies": {
     "@prisma/client": "^6.16.1",
+    "exceljs": "^4.4.0",
     "next": "^15.5.3",
     "qrcode": "^1.5.4",
     "react": "^19.1.0",

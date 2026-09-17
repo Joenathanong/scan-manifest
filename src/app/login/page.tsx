@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { apiPost } from '@/lib/client';
+import PasswordField from '@/components/PasswordField';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -68,27 +69,23 @@ export default function LoginPage() {
             className="input-field"
             value={username}
             onChange={(e) => setUsername(e.target.value)}
+            name="username"
             autoComplete="username"
             autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
             required
             autoFocus
           />
         </div>
 
-        <div>
-          <label className="field-label" htmlFor="p">
-            Password
-          </label>
-          <input
-            id="p"
-            type="password"
-            className="input-field"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            autoComplete="current-password"
-            required
-          />
-        </div>
+        <PasswordField
+          label="Password"
+          name="password"
+          autoComplete="current-password"
+          value={password}
+          onChange={setPassword}
+        />
 
         {error && (
           <div

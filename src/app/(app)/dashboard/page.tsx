@@ -4,6 +4,8 @@ import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { apiGet } from '@/lib/client';
 import { fmtDate, fmtDateTime, fmtNumber, fmtTime, todayISO } from '@/lib/date';
+import ExportButton from '@/components/ExportButton';
+import AnomaliCard from '@/components/AnomaliCard';
 
 type Data = {
   kpi: { awaiting: number; pickup: number; void: number; total: number; basketAktif: number; outboxTertunda: number };
@@ -108,6 +110,7 @@ export default function DashboardPage() {
         >
           Hari ini
         </button>
+        <ExportButton params={{ dari, sampai, expedisi }} />
       </div>
 
       <div className="kpi-grid">
@@ -121,6 +124,8 @@ export default function DashboardPage() {
           color={data?.kpi.outboxTertunda ? 'var(--negative)' : undefined}
         />
       </div>
+
+      <AnomaliCard dari={dari} sampai={sampai} expedisi={expedisi} />
 
       <div style={{ display: 'grid', gap: 'var(--gap)', gridTemplateColumns: 'repeat(auto-fit,minmax(320px,1fr))' }}>
         <div className="grid-card">

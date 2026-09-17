@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { apiGet } from '@/lib/client';
 import { fmtDate, fmtDateTime, fmtNumber, todayISO } from '@/lib/date';
+import ExportButton from '@/components/ExportButton';
 
 type Row = {
   id: number;
@@ -107,6 +108,7 @@ export default function HistoryPage() {
         <button type="button" className="btn btn-secondary" onClick={() => void muat()} disabled={loading}>
           {loading ? 'Memuat…' : 'Terapkan'}
         </button>
+        <ExportButton params={{ dari, sampai, status, cari: cari.trim() }} />
       </div>
 
       <div className="grid-card">

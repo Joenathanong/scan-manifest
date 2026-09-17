@@ -58,13 +58,14 @@ type StateResult = {
   totalNotValid: number;
 };
 
-const AREAS = ['Pusat', 'Surabaya', 'Yogyakarta', 'Medan', 'Makassar'];
+/** Manifest di aplikasi ini hanya untuk gudang Pusat. Tidak ada pilihan area lain. */
+const AREA = 'Pusat';
 const KEY = 'scan-manifest:doc';
 
 export default function Scan2Page() {
   const [expedisiList, setExpedisiList] = useState<Expedisi[]>([]);
   const [expedisiId, setExpedisiId] = useState<number | ''>('');
-  const [areaId, setAreaId] = useState('Pusat');
+  const [areaId] = useState(AREA);
   const [basketInput, setBasketInput] = useState('');
   const [sesi, setSesi] = useState<OpenResult | null>(null);
   const [st, setSt] = useState<StateResult | null>(null);
@@ -235,16 +236,23 @@ export default function Scan2Page() {
           </div>
 
           <div>
-            <label className="field-label" htmlFor="area">
-              Area
-            </label>
-            <select id="area" className="select-field" value={areaId} onChange={(e) => setAreaId(e.target.value)}>
-              {AREAS.map((a) => (
-                <option key={a} value={a}>
-                  {a}
-                </option>
-              ))}
-            </select>
+            <span className="field-label">Area</span>
+            <div
+              className="input-field"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                background: 'var(--bg-sunken)',
+                color: 'var(--ink)',
+                fontWeight: 600,
+              }}
+            >
+              {AREA}
+              <span className="badge badge-neutral" style={{ marginLeft: 'auto' }}>
+                tetap
+              </span>
+            </div>
           </div>
 
           <div>

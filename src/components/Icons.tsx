@@ -134,3 +134,27 @@ export const IconKey = (p: P) => (
     <path d="M11.5 12H20l1.5 1.5M17 12v3" />
   </Svg>
 );
+
+export const IconEye = (p: P) => (
+  <Svg className={p.className}>
+    <path d="M2.5 12S6 5.8 12 5.8 21.5 12 21.5 12 18 18.2 12 18.2 2.5 12 2.5 12Z" />
+    <circle cx="12" cy="12" r="3" />
+  </Svg>
+);
+
+export const IconEyeOff = (p: P) => (
+  <Svg className={p.className}>
+    <path d="M9.9 5.1A9.6 9.6 0 0 1 12 4.9c6 0 9.5 6.2 9.5 6.2a17 17 0 0 1-2.8 3.6" />
+    <path d="M6.3 6.5A16.7 16.7 0 0 0 2.5 11.1s3.5 6.2 9.5 6.2a9.5 9.5 0 0 0 3.7-.7" />
+    <path d="M10.1 10a2.8 2.8 0 0 0 3.9 3.9" />
+    <path d="m4 4 16 16" />
+  </Svg>
+);
+
+export const IconDownload = (p: P) => (
+  <Svg className={p.className}>
+    <path d="M12 3.5v11" />
+    <path d="m7.6 10.4 4.4 4.4 4.4-4.4" />
+    <path d="M4.5 16.5v1.4A2.6 2.6 0 0 0 7.1 20.5h9.8a2.6 2.6 0 0 0 2.6-2.6v-1.4" />
+  </Svg>
+);
