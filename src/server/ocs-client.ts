@@ -355,9 +355,41 @@ export async function diagnosa(params: { shipper: string; areaId: string }): Pro
 
   try {
     const baskets = await getBasketManifestList();
-    catat('Daftar basket OCS', true, `${Array.isArray(baskets) ? baskets.length : 0} basket tercatat di OCS.`);
+    const daftar = (Array.isArray(baskets) ? baskets : []).map(String).filter(Boolean);
+    if (!daftar.length) {
+      catat('Basket di OCS', true, 'Tidak ada basket tercatat.');
+    } else {
+      const panjang = daftar.map((b) => b.length);
+      const maks = Math.max(...panjang);
+      const terpanjang = [...daftar].sort((a, b) => b.length - a.length).slice(0, 5);
+      const berstrip = daftar.filter((b) => b.includes('-'));
+      catat(
+        'Basket di OCS',
+        true,
+        `${daftar.length} basket. Panjang ${Math.min(...panjang)}–${maks} karakter. ` +
+          `Terpanjang: ${terpanjang.join(', ')}. ` +
+          `${berstrip.length} memakai tanda "-"${berstrip.length ? ` (contoh: ${berstrip.slice(0, 3).join(', ')})` : ''}.`,
+      );
+
+      const contoh = `TEST-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-001`;
+      try {
+        await getHistoryBasketManifestList(contoh);
+        catat(
+          `Format kode "${contoh}" (${contoh.length} karakter)`,
+          true,
+          'Diterima OCS sebagai parameter basketId — panjang & tanda "-" bukan penyebab penolakan.',
+        );
+      } catch (e) {
+        catat(
+          `Format kode "${contoh}" (${contoh.length} karakter)`,
+          false,
+          `${e instanceof Error ? e.message : 'ditolak'} — kemungkinan besar formatnya memang tidak diterima. ` +
+            'Coba BASKET_CODE_STYLE=pendek di environment.',
+        );
+      }
+    }
   } catch (e) {
-    catat('Daftar basket OCS', false, e instanceof Error ? e.message : 'gagal');
+    catat('Basket di OCS', false, e instanceof Error ? e.message : 'gagal');
   }
 
   return hasil;

@@ -17,10 +17,23 @@ export type Scan2Result = {
   sisaBasket: number;
 };
 
-/** Kode basket final: JNT-20260917-001 */
+/**
+ * Kode basket final.
+ *   lengkap (bawaan) : JNT-20260917-001   -> 16 karakter, paling mudah dibaca
+ *   pendek           : JNT1709001         -> 10 karakter, tanpa tanda "-"
+ *
+ * Bentuk "pendek" disediakan karena basketId dikirim apa adanya ke OCS;
+ * kalau kolom di sana pendek atau menolak "-", cukup ubah BASKET_CODE_STYLE
+ * tanpa menyentuh kode. Nomor urut tetap per ekspedisi per hari.
+ */
 async function newBasketCode(expedisiCode: string, iso: string) {
   const seq = await nextSeq(`basket:${expedisiCode}:${iso}`);
-  return { code: `${expedisiCode}-${compactDate(iso)}-${String(seq).padStart(3, '0')}`, seq };
+  const urut = String(seq).padStart(3, '0');
+  const pendek = (process.env.BASKET_CODE_STYLE || 'lengkap').toLowerCase() === 'pendek';
+  const code = pendek
+    ? `${expedisiCode}${compactDate(iso).slice(6, 8)}${compactDate(iso).slice(4, 6)}${urut}`
+    : `${expedisiCode}-${compactDate(iso)}-${urut}`;
+  return { code, seq };
 }
 
 /**
