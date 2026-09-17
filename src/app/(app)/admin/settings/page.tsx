@@ -66,9 +66,14 @@ export default function SettingsPage() {
   const tesKoneksi = async () => {
     setBusy(true);
     setPing(null);
-    const res = await apiPost<{ ok: boolean; enabled: boolean; areas?: string[]; jumlahBasketOcs?: number; message?: string }>(
-      '/api/ocs/ping',
-    );
+    const res = await apiPost<{
+      ok: boolean;
+      enabled: boolean;
+      akun?: string | null;
+      areas?: string[];
+      jumlahBasketOcs?: number;
+      message?: string;
+    }>('/api/ocs/ping');
     setBusy(false);
     if (!res.ok) {
       setPing(`Gagal: ${res.error}`);
@@ -79,7 +84,10 @@ export default function SettingsPage() {
       setPing(res.data.message ?? 'OCS tidak aktif.');
       return;
     }
-    setPing(`Terhubung. Area OCS: ${(res.data.areas ?? []).join(', ')} · ${res.data.jumlahBasketOcs} basket tercatat di OCS.`);
+    setPing(
+      `Terhubung sebagai ${res.data.akun ?? 'akun sistem'}. ` +
+        `Area OCS: ${(res.data.areas ?? []).join(', ')} · ${res.data.jumlahBasketOcs} basket tercatat di OCS.`,
+    );
     toast('success', 'Koneksi OCS berhasil.');
   };
 
@@ -97,6 +105,28 @@ export default function SettingsPage() {
       return;
     }
     setLangkah(res.data.langkah);
+  };
+
+  const perbaikiKode = async () => {
+    if (!confirm('Ganti kode basket yang kepanjangan menjadi bentuk 10 karakter? Label yang sudah tercetak harus dicetak ulang.')) return;
+    setBusy(true);
+    const res = await apiPost<{ batas: number; diperbaiki: number; gagal: number; hasil: { lama: string; baru: string; ok: boolean }[] }>(
+      '/api/basket-kode',
+    );
+    setBusy(false);
+    if (!res.ok) {
+      toast('error', res.error);
+      return;
+    }
+    const { diperbaiki, gagal, hasil } = res.data;
+    setPing(
+      diperbaiki === 0 && gagal === 0
+        ? 'Tidak ada basket berkode kepanjangan. Semuanya sudah sesuai batas OCS.'
+        : `${diperbaiki} basket diganti kodenya${gagal ? `, ${gagal} gagal` : ''}: ` +
+          hasil.filter((h) => h.ok).map((h) => `${h.lama} → ${h.baru}`).join(' · '),
+    );
+    toast(gagal ? 'warning' : 'success', `${diperbaiki} basket diperbaiki.`);
+    void muat();
   };
 
   const kirimUlang = async () => {
@@ -125,6 +155,9 @@ export default function SettingsPage() {
           </button>
           <button type="button" className="btn btn-primary" onClick={() => void kirimUlang()} disabled={busy}>
             Kirim ulang semua antrean
+          </button>
+          <button type="button" className="btn btn-secondary" onClick={() => void perbaikiKode()} disabled={busy}>
+            Perbaiki kode basket kepanjangan
           </button>
         </div>
         {ping && <div style={{ fontSize: 13 }}>{ping}</div>}

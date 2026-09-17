@@ -15,26 +15,28 @@ function hashPassword(plain) {
  * di menu Admin > Ekspedisi. Ekspedisi yang salah tebak otomatis dikoreksi saat
  * scan tahap 2 (mengikuti ekspedisi basket), jadi tidak ada risiko data salah.
  */
+// ocsPrefix WAJIB <=3 huruf dan unik: kolom basketId di OCS hanya varchar(10),
+// jadi kode basket berbentuk <awalan3><dd><MM><urut3>.
 const EKSPEDISI = [
-  { code: 'JNT', name: 'J&T Express', ocsShipper: 'J&T', prefixes: 'JP,JX,JD,JT', sortOrder: 1 },
-  { code: 'SPX', name: 'Shopee Express', ocsShipper: 'SPX', prefixes: 'SPX,SPXID', sortOrder: 2 },
-  { code: 'JNE', name: 'JNE', ocsShipper: 'JNE', prefixes: 'JNE,TLJ', sortOrder: 3 },
-  { code: 'SICEPAT', name: 'SiCepat', ocsShipper: 'SiCepat', prefixes: '00,000', sortOrder: 4 },
-  { code: 'ANTERAJA', name: 'AnterAja', ocsShipper: 'Anteraja', prefixes: '10,ANT', sortOrder: 5 },
-  { code: 'NINJA', name: 'Ninja Xpress', ocsShipper: 'NinjaVan', prefixes: 'NV,NLID', sortOrder: 6 },
-  { code: 'LEX', name: 'Lazada Express', ocsShipper: 'LEX', prefixes: 'LEX,LZD', sortOrder: 7 },
-  { code: 'IDX', name: 'ID Express', ocsShipper: 'IDX', prefixes: 'IDX,TKP', sortOrder: 8 },
-  { code: 'GTL', name: 'GTL', ocsShipper: 'GTL', prefixes: 'GTL', sortOrder: 9 },
-  { code: 'BLITZ', name: 'Blitz Express', ocsShipper: 'Blitz', prefixes: 'BLZ', sortOrder: 10 },
-  { code: 'GOJEK', name: 'Gojek Instant', ocsShipper: 'Gojek', prefixes: '', sortOrder: 11 },
-  { code: 'GRAB', name: 'Grab Instant', ocsShipper: 'Grab', prefixes: '', sortOrder: 12 },
+  { code: 'JNT', ocsPrefix: 'JNT', name: 'J&T Express', ocsShipper: 'J&T', prefixes: 'JP,JX,JD,JT', sortOrder: 1 },
+  { code: 'SPX', ocsPrefix: 'SPX', name: 'Shopee Express', ocsShipper: 'SPX', prefixes: 'SPX,SPXID', sortOrder: 2 },
+  { code: 'JNE', ocsPrefix: 'JNE', name: 'JNE', ocsShipper: 'JNE', prefixes: 'JNE,TLJ', sortOrder: 3 },
+  { code: 'SICEPAT', ocsPrefix: 'SIC', name: 'SiCepat', ocsShipper: 'SiCepat', prefixes: '00,000', sortOrder: 4 },
+  { code: 'ANTERAJA', ocsPrefix: 'ANT', name: 'AnterAja', ocsShipper: 'Anteraja', prefixes: '10,ANT', sortOrder: 5 },
+  { code: 'NINJA', ocsPrefix: 'NIN', name: 'Ninja Xpress', ocsShipper: 'NinjaVan', prefixes: 'NV,NLID', sortOrder: 6 },
+  { code: 'LEX', ocsPrefix: 'LEX', name: 'Lazada Express', ocsShipper: 'LEX', prefixes: 'LEX,LZD', sortOrder: 7 },
+  { code: 'IDX', ocsPrefix: 'IDX', name: 'ID Express', ocsShipper: 'IDX', prefixes: 'IDX,TKP', sortOrder: 8 },
+  { code: 'GTL', ocsPrefix: 'GTL', name: 'GTL', ocsShipper: 'GTL', prefixes: 'GTL', sortOrder: 9 },
+  { code: 'BLITZ', ocsPrefix: 'BLZ', name: 'Blitz Express', ocsShipper: 'Blitz', prefixes: 'BLZ', sortOrder: 10 },
+  { code: 'GOJEK', ocsPrefix: 'GOJ', name: 'Gojek Instant', ocsShipper: 'Gojek', prefixes: '', sortOrder: 11 },
+  { code: 'GRAB', ocsPrefix: 'GRB', name: 'Grab Instant', ocsShipper: 'Grab', prefixes: '', sortOrder: 12 },
 ];
 
 async function main() {
   for (const e of EKSPEDISI) {
     await prisma.expedisi.upsert({
       where: { code: e.code },
-      update: { name: e.name, ocsShipper: e.ocsShipper, sortOrder: e.sortOrder },
+      update: { name: e.name, ocsShipper: e.ocsShipper, sortOrder: e.sortOrder, ocsPrefix: e.ocsPrefix },
       create: e,
     });
   }

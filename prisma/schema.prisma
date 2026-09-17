@@ -62,7 +62,15 @@ model User {
   role               Role     @default(OPERATOR)
   active             Boolean  @default(true)
   mustChangePassword Boolean  @default(false)
+  // --- Akun OCS milik operator ini (opsional) ---
+  // Kalau diisi, manifest dikirim ke OCS memakai akun ini sehingga dokumen
+  // tercatat atas namanya (mis. MANIFEST001), bukan akun sistem di .env.
   ocsUserCode        String?  @db.VarChar(64)
+  ocsUsername        String?  @db.VarChar(64)
+  // Terenkripsi AES-256-GCM dengan kunci turunan SESSION_SECRET.
+  // TIDAK PERNAH dikirim ke browser dalam bentuk apa pun.
+  ocsPasswordEnc     String?  @db.VarChar(512)
+  ocsCompanyDb       String?  @db.VarChar(64)
   lastLoginAt        DateTime?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
@@ -85,6 +93,10 @@ model Expedisi {
   code       String   @unique @db.VarChar(32)
   name       String   @db.VarChar(80)
   ocsShipper String   @db.VarChar(40)
+  // Awalan kode basket yang dikirim ke OCS. Kolom basketId di OCS hanya
+  // varchar(10), jadi awalan ini WAJIB pendek (maks 3 huruf) dan unik.
+  // Kosong = diambil 3 huruf pertama dari `code`.
+  ocsPrefix  String?  @db.VarChar(3)
   prefixes   String   @default("") @db.VarChar(1000)
   active     Boolean  @default(true)
   sortOrder  Int      @default(0)

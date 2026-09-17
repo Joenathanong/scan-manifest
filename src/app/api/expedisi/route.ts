@@ -22,6 +22,7 @@ export async function POST(req: Request) {
           code: str(body.code, 'Kode', 32).toUpperCase(),
           name: str(body.name, 'Nama', 80),
           ocsShipper: str(body.ocsShipper, 'Nama kurir di OCS', 40),
+          ocsPrefix: (optStr(body.ocsPrefix, 3) ?? str(body.code, 'Kode', 32)).toUpperCase().slice(0, 3),
           prefixes: optStr(body.prefixes, 1000) ?? '',
           sortOrder: Number(body.sortOrder) || 0,
           active: body.active === false ? false : true,

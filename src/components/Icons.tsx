@@ -158,3 +158,9 @@ export const IconDownload = (p: P) => (
     <path d="M4.5 16.5v1.4A2.6 2.6 0 0 0 7.1 20.5h9.8a2.6 2.6 0 0 0 2.6-2.6v-1.4" />
   </Svg>
 );
+
+export const IconPlus = (p: P) => (
+  <Svg className={p.className}>
+    <path d="M12 5v14M5 12h14" />
+  </Svg>
+);

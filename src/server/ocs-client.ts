@@ -7,9 +7,16 @@
  * Auth : POST /Auth/Login { username, password, companydb } -> { Token }
  *        Header berikutnya: Authorization: Bearer <Token>. JWT berlaku 24 jam.
  * Balasan backend dibungkus { statusCode, data, error }.
+ *
+ * SATU KLIEN, BANYAK AKUN. Setiap fungsi menerima `cred` opsional: kalau diisi,
+ * permintaan dijalankan atas nama akun OCS operator (mis. MANIFEST001) sehingga
+ * dokumen manifest tercatat atas namanya. Kalau kosong, dipakai akun sistem
+ * dari environment. Token di-cache per akun, bukan global.
  */
 
 export type OcsEnvelope<T> = { statusCode: number; data: T; error?: string | null };
+
+export type Kredensial = { username: string; password: string; companydb: string; label?: string };
 
 export type OcsOrderItem = {
   OrderId: string;
@@ -54,92 +61,112 @@ export class OcsError extends Error {
 
 type Cached = { token: string; expiresAt: number };
 
-const globalForOcs = globalThis as unknown as { __ocsToken?: Cached };
+const globalForOcs = globalThis as unknown as { __ocsTokens?: Map<string, Cached> };
+const cacheToken = (globalForOcs.__ocsTokens ??= new Map<string, Cached>());
 
-function cfg() {
-  const baseUrl = (process.env.OCS_BASE_URL || 'https://ocs.iegsystem.id').replace(/\/+$/, '');
+function baseUrl(): string {
+  return (process.env.OCS_BASE_URL || 'https://ocs.iegsystem.id').replace(/\/+$/, '');
+}
+
+function timeoutMs(): number {
+  return Number(process.env.OCS_TIMEOUT_MS || 30000);
+}
+
+/** Akun sistem dari environment — dipakai kalau operator belum punya akun OCS sendiri. */
+export function kredensialSistem(): Kredensial | null {
   const username = process.env.OCS_USERNAME || '';
   const password = process.env.OCS_PASSWORD || '';
   const companydb = process.env.OCS_COMPANYDB || '';
-  const timeout = Number(process.env.OCS_TIMEOUT_MS || 30000);
-  return { baseUrl, username, password, companydb, timeout };
+  if (!username || !password || !companydb) return null;
+  return { username, password, companydb, label: `${username} (akun sistem)` };
 }
 
 export function ocsEnabled(): boolean {
-  const { username, password, companydb } = cfg();
-  return process.env.OCS_ENABLED !== 'false' && !!username && !!password && !!companydb;
+  return process.env.OCS_ENABLED !== 'false' && !!kredensialSistem();
 }
 
-async function rawFetch(path: string, init: RequestInit, timeoutMs: number): Promise<Response> {
-  const { baseUrl } = cfg();
+function pakai(cred?: Kredensial | null): Kredensial {
+  const dipakai = cred ?? kredensialSistem();
+  if (!dipakai) {
+    throw new OcsError('Kredensial OCS belum diisi (OCS_USERNAME / OCS_PASSWORD / OCS_COMPANYDB).', 500);
+  }
+  return dipakai;
+}
+
+function kunciCache(cred: Kredensial): string {
+  return `${cred.companydb}::${cred.username}`;
+}
+
+async function rawFetch(path: string, init: RequestInit): Promise<Response> {
+  const batas = timeoutMs();
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const timer = setTimeout(() => controller.abort(), batas);
   try {
-    return await fetch(`${baseUrl}${path}`, { ...init, signal: controller.signal, cache: 'no-store' });
+    return await fetch(`${baseUrl()}${path}`, { ...init, signal: controller.signal, cache: 'no-store' });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     throw new OcsError(
-      /abort/i.test(msg) ? `OCS tidak menjawab dalam ${Math.round(timeoutMs / 1000)} detik.` : `Tidak bisa menghubungi OCS: ${msg}`,
+      /abort/i.test(msg)
+        ? `OCS tidak menjawab dalam ${Math.round(batas / 1000)} detik.`
+        : `Tidak bisa menghubungi OCS: ${msg}`,
     );
   } finally {
     clearTimeout(timer);
   }
 }
 
-export async function login(): Promise<string> {
-  const { username, password, companydb, timeout } = cfg();
-  if (!username || !password || !companydb) {
-    throw new OcsError('Kredensial OCS belum diisi (OCS_USERNAME / OCS_PASSWORD / OCS_COMPANYDB).', 500);
-  }
-  const res = await rawFetch(
-    '/Auth/Login',
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password, companydb }),
-    },
-    timeout,
-  );
+export async function login(cred?: Kredensial | null): Promise<string> {
+  const akun = pakai(cred);
+  const res = await rawFetch('/Auth/Login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      username: akun.username,
+      password: akun.password,
+      companydb: akun.companydb,
+    }),
+  });
+
   const body = (await res.json().catch(() => null)) as { Token?: string; token?: string; error?: string } | null;
   const token = body?.Token || body?.token;
   if (!res.ok || !token) {
-    throw new OcsError(body?.error || `Login OCS gagal (HTTP ${res.status}).`, res.status === 401 ? 401 : 502);
+    throw new OcsError(
+      `Login OCS gagal untuk ${akun.username}: ${body?.error || `HTTP ${res.status}`}`,
+      res.status === 401 ? 401 : 502,
+    );
   }
   // JWT OCS berlaku 24 jam; disimpan 20 jam saja supaya tidak kadaluwarsa di tengah proses.
-  globalForOcs.__ocsToken = { token, expiresAt: Date.now() + 20 * 3600 * 1000 };
+  cacheToken.set(kunciCache(akun), { token, expiresAt: Date.now() + 20 * 3600 * 1000 });
   return token;
 }
 
-async function token(force = false): Promise<string> {
-  const cached = globalForOcs.__ocsToken;
-  if (!force && cached && cached.expiresAt > Date.now()) return cached.token;
-  return login();
+async function token(cred: Kredensial, force = false): Promise<string> {
+  const ada = cacheToken.get(kunciCache(cred));
+  if (!force && ada && ada.expiresAt > Date.now()) return ada.token;
+  return login(cred);
 }
 
 async function call<T>(
   path: string,
   init: RequestInit = {},
+  cred?: Kredensial | null,
   retryOn401 = true,
 ): Promise<T> {
-  const { timeout } = cfg();
-  const jwt = await token();
-  const res = await rawFetch(
-    path,
-    {
-      ...init,
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${jwt}`,
-        ...(init.headers || {}),
-      },
+  const akun = pakai(cred);
+  const jwt = await token(akun);
+  const res = await rawFetch(path, {
+    ...init,
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${jwt}`,
+      ...(init.headers || {}),
     },
-    timeout,
-  );
+  });
 
   if (res.status === 401 && retryOn401) {
-    globalForOcs.__ocsToken = undefined;
-    await token(true);
-    return call<T>(path, init, false);
+    cacheToken.delete(kunciCache(akun));
+    await token(akun, true);
+    return call<T>(path, init, akun, false);
   }
 
   const text = await res.text();
@@ -163,8 +190,7 @@ async function call<T>(
   }
 
   if (!res.ok) {
-    const msg = pesanError(body) || `HTTP ${res.status}`;
-    throw new OcsError(`OCS menolak: ${msg} — ${path.split('?')[0]}`, 502);
+    throw new OcsError(`OCS menolak: ${pesanError(body) || `HTTP ${res.status}`} — ${path.split('?')[0]}`, 502);
   }
   return body as T;
 }
@@ -204,20 +230,24 @@ const q = (v: string) => encodeURIComponent(v);
 /**
  * Mulai / lanjutkan dokumen manifest untuk satu basket.
  * Mengembalikan DocId + daftar order yang BELUM dimanifest untuk kurir tsb.
+ * CATATAN: basketId di OCS bertipe varchar(10) — lebih panjang ditolak 22001.
  */
-export function startManifest(params: {
-  shipper: string;
-  areaId: string;
-  basketId: string;
-  isProcessing?: boolean;
-  docId?: number | null;
-}): Promise<OcsDoc> {
+export function startManifest(
+  params: {
+    shipper: string;
+    areaId: string;
+    basketId: string;
+    isProcessing?: boolean;
+    docId?: number | null;
+  },
+  cred?: Kredensial | null,
+): Promise<OcsDoc> {
   const { shipper, areaId, basketId, isProcessing = false, docId } = params;
   const path =
     `/Fulfillment/OrderNotManifestedV2?shipper=${q(shipper)}&areaId=${q(areaId)}` +
     `&basketId=${q(basketId)}&isProcessing=${isProcessing}` +
     (docId ? `&docId=${docId}` : '');
-  return call<OcsDoc>(path, { method: 'GET' });
+  return call<OcsDoc>(path, { method: 'GET' }, cred);
 }
 
 /**
@@ -227,10 +257,12 @@ export function startManifest(params: {
 export async function checkInvalidManifest(
   scan: string,
   shipper: string,
+  cred?: Kredensial | null,
 ): Promise<{ ok: true; orderId: string; trackingNumber: string } | { ok: false; reason: string }> {
   const data = await call<string>(
     `/Fulfillment/CheckInvalidManifest?scan=${q(scan)}&shippingProvider=${q(shipper)}`,
     { method: 'GET' },
+    cred,
   );
   const parts = String(data ?? '').split('#');
   if (parts[0] === 'OK') {
@@ -246,88 +278,136 @@ function docQuery(k: DocKey): string {
 }
 
 /** Simpan sementara (auto-save). OCS menerima maksimal 100 baris sekali kirim. */
-export async function saveTemporaryManifest(key: DocKey, rows: OcsScanPayload[]): Promise<number> {
+export async function saveTemporaryManifest(
+  key: DocKey,
+  rows: OcsScanPayload[],
+  cred?: Kredensial | null,
+): Promise<number> {
   let sent = 0;
   for (let i = 0; i < rows.length; i += 100) {
     const chunk = rows.slice(i, i + 100);
-    await call<unknown>(`/Fulfillment/SaveTemporaryManifestV2?${docQuery(key)}`, {
-      method: 'POST',
-      body: JSON.stringify(chunk),
-    });
+    await call<unknown>(
+      `/Fulfillment/SaveTemporaryManifestV2?${docQuery(key)}`,
+      { method: 'POST', body: JSON.stringify(chunk) },
+      cred,
+    );
     sent += chunk.length;
   }
   return sent;
 }
 
 /** Submit final — dokumen manifest ditutup di OCS. */
-export function submitManifest(key: DocKey, rows: OcsScanPayload[]): Promise<unknown> {
-  return call<unknown>(`/Fulfillment/SubmitManifestV2?${docQuery(key)}`, {
-    method: 'POST',
-    body: JSON.stringify(rows),
-  });
+export function submitManifest(
+  key: DocKey,
+  rows: OcsScanPayload[],
+  cred?: Kredensial | null,
+): Promise<unknown> {
+  return call<unknown>(
+    `/Fulfillment/SubmitManifestV2?${docQuery(key)}`,
+    { method: 'POST', body: JSON.stringify(rows) },
+    cred,
+  );
 }
 
-export function checkManifestInBasket(docId: number): Promise<unknown> {
-  return call<unknown>(`/Fulfillment/CheckManifestInBasket?docId=${docId}`, { method: 'GET' });
+export function checkManifestInBasket(docId: number, cred?: Kredensial | null): Promise<unknown> {
+  return call<unknown>(`/Fulfillment/CheckManifestInBasket?docId=${docId}`, { method: 'GET' }, cred);
 }
 
-export function getBasketManifestStillProcessing(): Promise<unknown[]> {
-  return call<unknown[]>('/Fulfillment/GetBasketManifestStillProcessing', { method: 'GET' });
+export function getBasketManifestStillProcessing(cred?: Kredensial | null): Promise<unknown[]> {
+  return call<unknown[]>('/Fulfillment/GetBasketManifestStillProcessing', { method: 'GET' }, cred);
 }
 
-export function getHistoryBasketManifestList(basketId: string): Promise<unknown[]> {
-  return call<unknown[]>(`/Fulfillment/GetHistoryBasketManifestList?basketId=${q(basketId)}`, {
-    method: 'GET',
-  });
+export function getHistoryBasketManifestList(basketId: string, cred?: Kredensial | null): Promise<unknown[]> {
+  return call<unknown[]>(
+    `/Fulfillment/GetHistoryBasketManifestList?basketId=${q(basketId)}`,
+    { method: 'GET' },
+    cred,
+  );
 }
 
-export function getAreaList(): Promise<string[]> {
-  return call<string[]>('/MasterData/GetAreaList', { method: 'GET' });
+export function getAreaList(cred?: Kredensial | null): Promise<string[]> {
+  return call<string[]>('/MasterData/GetAreaList', { method: 'GET' }, cred);
 }
 
-export function getBasketManifestList(): Promise<string[]> {
-  return call<string[]>('/MasterData/GetBasketManifestList', { method: 'GET' });
+export function getBasketManifestList(cred?: Kredensial | null): Promise<string[]> {
+  return call<string[]>('/MasterData/GetBasketManifestList', { method: 'GET' }, cred);
+}
+
+export function getAllUsername(cred?: Kredensial | null): Promise<{ UserCode: string }[]> {
+  return call<{ UserCode: string }[]>('/MasterData/GetAllUsername', { method: 'GET' }, cred);
 }
 
 /** Daftar order belum dimanifest versi lama (GET, TIDAK membuat dokumen). */
-export function orderNotManifested(shipper: string): Promise<unknown[]> {
+export function orderNotManifested(shipper: string, cred?: Kredensial | null): Promise<unknown[]> {
   return call<unknown[]>(
     `/Fulfillment/OrderNotManifested?shippingProvider=${q(shipper)}&isAll=false`,
     { method: 'GET' },
+    cred,
   );
 }
 
 /** Tes koneksi + kredensial (dipakai halaman Admin > Setelan). */
-export async function ping(): Promise<{ ok: boolean; areas: string[] }> {
-  await login();
-  const areas = await getAreaList();
+export async function ping(cred?: Kredensial | null): Promise<{ ok: boolean; areas: string[] }> {
+  await login(cred);
+  const areas = await getAreaList(cred);
   return { ok: true, areas: Array.isArray(areas) ? areas : [] };
+}
+
+/**
+ * Tes satu akun OCS (dipakai tombol "Tes" di Admin > Pengguna).
+ * Sekaligus memeriksa apakah UserCode-nya terdaftar sebagai operator manifest.
+ */
+export async function tesAkun(cred: Kredensial): Promise<{ ok: boolean; pesan: string }> {
+  try {
+    await login(cred);
+    const users = await getAllUsername(cred).catch(() => [] as { UserCode: string }[]);
+    const manifest = users.filter((u) => String(u.UserCode || '').startsWith('MANIFEST')).map((u) => u.UserCode);
+    const terdaftar = manifest.some((u) => u.toUpperCase() === cred.username.toUpperCase());
+    return {
+      ok: true,
+      pesan:
+        `Login berhasil sebagai ${cred.username} (${cred.companydb}).` +
+        (manifest.length
+          ? terdaftar
+            ? ' Terdaftar sebagai operator manifest di OCS.'
+            : ` Catatan: akun ini tidak ada di daftar operator manifest OCS (${manifest.slice(0, 6).join(', ')}…).`
+          : ''),
+    };
+  } catch (e) {
+    return { ok: false, pesan: e instanceof Error ? e.message : 'Login gagal.' };
+  }
 }
 
 export type LangkahDiagnosa = { langkah: string; ok: boolean; pesan: string };
 
 /**
  * Diagnosa read-only: memeriksa tiap prasyarat yang bisa membuat
- * OrderNotManifestedV2 menolak dengan 400, TANPA membuat dokumen manifest.
+ * OrderNotManifestedV2 menolak, TANPA membuat dokumen manifest.
  */
-export async function diagnosa(params: { shipper: string; areaId: string }): Promise<LangkahDiagnosa[]> {
+export async function diagnosa(params: {
+  shipper: string;
+  areaId: string;
+  cred?: Kredensial | null;
+}): Promise<LangkahDiagnosa[]> {
+  const { shipper, areaId, cred } = params;
   const hasil: LangkahDiagnosa[] = [];
   const catat = (langkah: string, ok: boolean, pesan: string) => hasil.push({ langkah, ok, pesan });
+  const akun = cred ?? kredensialSistem();
 
   try {
-    await login();
-    catat('Login OCS', true, `Berhasil sebagai ${process.env.OCS_USERNAME} / ${process.env.OCS_COMPANYDB}`);
+    await login(akun);
+    catat('Login OCS', true, `Berhasil sebagai ${akun?.username} / ${akun?.companydb}`);
   } catch (e) {
     catat('Login OCS', false, e instanceof Error ? e.message : 'gagal');
     return hasil;
   }
 
   try {
-    const areas = await getAreaList();
+    const areas = await getAreaList(akun);
     const daftar = Array.isArray(areas) ? areas.map(String) : [];
-    const cocok = daftar.includes(params.areaId);
+    const cocok = daftar.includes(areaId);
     catat(
-      `Area "${params.areaId}"`,
+      `Area "${areaId}"`,
       cocok,
       cocok ? `Dikenal OCS. Semua area: ${daftar.join(', ')}` : `TIDAK ada di OCS. Yang dikenal: ${daftar.join(', ')}`,
     );
@@ -336,10 +416,10 @@ export async function diagnosa(params: { shipper: string; areaId: string }): Pro
   }
 
   try {
-    const orders = await orderNotManifested(params.shipper);
+    const orders = await orderNotManifested(shipper, akun);
     const jumlah = Array.isArray(orders) ? orders.length : 0;
     catat(
-      `Kurir "${params.shipper}"`,
+      `Kurir "${shipper}"`,
       true,
       jumlah > 0
         ? `Diterima OCS. ${jumlah} order belum dimanifest untuk kurir ini.`
@@ -347,46 +427,26 @@ export async function diagnosa(params: { shipper: string; areaId: string }): Pro
     );
   } catch (e) {
     catat(
-      `Kurir "${params.shipper}"`,
+      `Kurir "${shipper}"`,
       false,
       `${e instanceof Error ? e.message : 'gagal'} — nama kurir harus persis sama dengan pilihan di OCS Manifest V2.`,
     );
   }
 
   try {
-    const baskets = await getBasketManifestList();
+    const baskets = await getBasketManifestList(akun);
     const daftar = (Array.isArray(baskets) ? baskets : []).map(String).filter(Boolean);
     if (!daftar.length) {
       catat('Basket di OCS', true, 'Tidak ada basket tercatat.');
     } else {
       const panjang = daftar.map((b) => b.length);
-      const maks = Math.max(...panjang);
       const terpanjang = [...daftar].sort((a, b) => b.length - a.length).slice(0, 5);
-      const berstrip = daftar.filter((b) => b.includes('-'));
       catat(
         'Basket di OCS',
         true,
-        `${daftar.length} basket. Panjang ${Math.min(...panjang)}–${maks} karakter. ` +
-          `Terpanjang: ${terpanjang.join(', ')}. ` +
-          `${berstrip.length} memakai tanda "-"${berstrip.length ? ` (contoh: ${berstrip.slice(0, 3).join(', ')})` : ''}.`,
+        `${daftar.length} basket. Panjang ${Math.min(...panjang)}–${Math.max(...panjang)} karakter. ` +
+          `Terpanjang: ${terpanjang.join(', ')}. Kolom basketId di OCS varchar(10).`,
       );
-
-      const contoh = `TEST-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-001`;
-      try {
-        await getHistoryBasketManifestList(contoh);
-        catat(
-          `Format kode "${contoh}" (${contoh.length} karakter)`,
-          true,
-          'Diterima OCS sebagai parameter basketId — panjang & tanda "-" bukan penyebab penolakan.',
-        );
-      } catch (e) {
-        catat(
-          `Format kode "${contoh}" (${contoh.length} karakter)`,
-          false,
-          `${e instanceof Error ? e.message : 'ditolak'} — kemungkinan besar formatnya memang tidak diterima. ` +
-            'Coba BASKET_CODE_STYLE=pendek di environment.',
-        );
-      }
     }
   } catch (e) {
     catat('Basket di OCS', false, e instanceof Error ? e.message : 'gagal');

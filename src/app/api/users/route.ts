@@ -8,10 +8,12 @@ export const dynamic = 'force-dynamic';
 
 const ROLES: Role[] = ['ADMIN', 'SUPERVISOR', 'OPERATOR'];
 
+type BarisUser = { ocsPasswordEnc: string | null; [k: string]: unknown };
+
 export async function GET() {
   return handle(async () => {
     await requireAdmin();
-    return prisma.user.findMany({
+    const rows = (await prisma.user.findMany({
       orderBy: [{ active: 'desc' }, { username: 'asc' }],
       select: {
         id: true,
@@ -20,11 +22,17 @@ export async function GET() {
         role: true,
         active: true,
         ocsUserCode: true,
+        ocsUsername: true,
+        ocsCompanyDb: true,
+        ocsPasswordEnc: true,
         mustChangePassword: true,
         lastLoginAt: true,
         createdAt: true,
       },
-    });
+    })) as BarisUser[];
+
+    // Ganti hash password OCS dengan penanda boolean — jangan pernah keluar dari server.
+    return rows.map(({ ocsPasswordEnc, ...sisanya }) => ({ ...sisanya, adaPasswordOcs: !!ocsPasswordEnc }));
   });
 }
 

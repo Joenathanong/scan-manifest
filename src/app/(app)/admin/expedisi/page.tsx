@@ -9,6 +9,7 @@ type Expedisi = {
   code: string;
   name: string;
   ocsShipper: string;
+  ocsPrefix: string | null;
   prefixes: string;
   active: boolean;
   sortOrder: number;
@@ -23,7 +24,7 @@ const OCS_SHIPPERS = [
 export default function ExpedisiPage() {
   const [rows, setRows] = useState<Expedisi[]>([]);
   const [draft, setDraft] = useState<Record<number, Partial<Expedisi>>>({});
-  const [form, setForm] = useState({ code: '', name: '', ocsShipper: 'J&T', prefixes: '' });
+  const [form, setForm] = useState({ code: '', name: '', ocsShipper: 'J&T', ocsPrefix: '', prefixes: '' });
   const [busy, setBusy] = useState(false);
 
   const muat = useCallback(async () => {
@@ -46,7 +47,7 @@ export default function ExpedisiPage() {
       return;
     }
     toast('success', 'Ekspedisi ditambahkan.');
-    setForm({ code: '', name: '', ocsShipper: 'J&T', prefixes: '' });
+    setForm({ code: '', name: '', ocsShipper: 'J&T', ocsPrefix: '', prefixes: '' });
     void muat();
   };
 
@@ -70,8 +71,10 @@ export default function ExpedisiPage() {
     <div style={{ display: 'grid', gap: 'var(--gap)' }}>
       <h1 className="page-title">Ekspedisi</h1>
       <p style={{ color: 'var(--ink-label)', fontSize: 13, marginTop: -6 }}>
-        Prefix dipakai untuk menebak ekspedisi saat scan tahap 1. Nama kurir OCS harus persis sama dengan pilihan di
-        Manifest V2 — kalau salah, OCS akan menolak manifestnya.
+        Prefix resi dipakai untuk menebak ekspedisi saat scan tahap 1. Nama kurir OCS harus persis sama dengan
+        pilihan di Manifest V2. <strong>Awalan OCS</strong> maksimal 3 huruf dan harus unik — kolom basketId di OCS
+        hanya <code>varchar(10)</code>, jadi kode basket dibentuk <code>&lt;awalan&gt;&lt;dd&gt;&lt;MM&gt;&lt;urut&gt;</code>,
+        contoh <code>JNT1709001</code>.
       </p>
 
       <form onSubmit={tambah} className="card" style={{ display: 'grid', gap: 10 }}>
@@ -92,6 +95,10 @@ export default function ExpedisiPage() {
                 <option key={s} value={s}>{s}</option>
               ))}
             </select>
+          </div>
+          <div>
+            <label className="field-label" htmlFor="ap">Awalan OCS (maks 3 huruf)</label>
+            <input id="ap" className="input-field mono" maxLength={3} value={form.ocsPrefix} onChange={(e) => setForm({ ...form, ocsPrefix: e.target.value.toUpperCase().slice(0, 3) })} placeholder="JNT" />
           </div>
           <div>
             <label className="field-label" htmlFor="p">Prefix resi (pisahkan koma)</label>
@@ -115,7 +122,8 @@ export default function ExpedisiPage() {
                 <th>Kode</th>
                 <th>Nama</th>
                 <th>Kurir OCS</th>
-                <th>Prefix</th>
+                <th>Awalan OCS</th>
+                <th className="p2">Prefix resi</th>
                 <th>Aktif</th>
                 <th>Aksi</th>
               </tr>
@@ -147,7 +155,16 @@ export default function ExpedisiPage() {
                         ))}
                       </select>
                     </td>
-                    <td data-label="Prefix">
+                    <td data-label="Awalan OCS">
+                      <input
+                        className="input-field mono"
+                        style={{ height: 30, fontSize: 12 }}
+                        maxLength={3}
+                        value={d.ocsPrefix ?? r.ocsPrefix ?? r.code.slice(0, 3)}
+                        onChange={(e) => patch({ ocsPrefix: e.target.value.toUpperCase().slice(0, 3) })}
+                      />
+                    </td>
+                    <td className="p2" data-label="Prefix resi">
                       <input
                         className="input-field mono"
                         style={{ height: 30, fontSize: 12 }}

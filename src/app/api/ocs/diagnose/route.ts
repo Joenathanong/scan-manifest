@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/db';
 import { ApiError, handle, int, requireUser, str } from '@/lib/api';
 import * as ocs from '@/server/ocs-client';
+import { kredensialUntukUser } from '@/server/ocs-credentials';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -9,7 +10,7 @@ export const maxDuration = 60;
 /** Diagnosa read-only — TIDAK membuat dokumen manifest di OCS. */
 export async function POST(req: Request) {
   return handle(async () => {
-    await requireUser();
+    const me = await requireUser();
     const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
     const expedisi = await prisma.expedisi.findUnique({ where: { id: int(body.expedisiId, 'Ekspedisi') } });
     if (!expedisi) throw new ApiError('Ekspedisi tidak ditemukan.', 404);
@@ -23,10 +24,12 @@ export async function POST(req: Request) {
       };
     }
 
+    const cred = await kredensialUntukUser(me.id);
     return {
       shipper: expedisi.ocsShipper,
       areaId,
-      langkah: await ocs.diagnosa({ shipper: expedisi.ocsShipper, areaId }),
+      akun: cred?.label ?? null,
+      langkah: await ocs.diagnosa({ shipper: expedisi.ocsShipper, areaId, cred }),
     };
   });
 }

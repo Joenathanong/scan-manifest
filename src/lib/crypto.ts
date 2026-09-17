@@ -1,4 +1,11 @@
-import { createHmac, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHmac,
+  randomBytes,
+  scryptSync,
+  timingSafeEqual,
+} from 'node:crypto';
 
 const N = 16384;
 const KEYLEN = 32;
@@ -61,4 +68,37 @@ export function tempPassword(): string {
   const pick = (src: string, n: number) =>
     Array.from({ length: n }, () => src[randomBytes(1)[0] % src.length]).join('');
   return pick(ALPHABET, 4) + pick(DIGITS, 4);
+}
+
+/* =========================================================================
+   Rahasia yang HARUS bisa dibaca kembali (password akun OCS milik operator).
+   Beda dari password aplikasi yang di-hash satu arah: password OCS perlu
+   dikirim apa adanya ke /Auth/Login, jadi disimpan terenkripsi AES-256-GCM
+   dengan kunci turunan SESSION_SECRET — bukan plaintext di database.
+   ========================================================================= */
+
+function kunciRahasia(): Buffer {
+  return scryptSync(secret(), 'ieg-ocs-credential', 32);
+}
+
+export function encryptSecret(plain: string): string {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', kunciRahasia(), iv);
+  const enc = Buffer.concat([cipher.update(plain, 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return `v1.${iv.toString('base64url')}.${tag.toString('base64url')}.${enc.toString('base64url')}`;
+}
+
+/** null kalau kosong, rusak, atau SESSION_SECRET sudah berganti. */
+export function decryptSecret(stored: string | null | undefined): string | null {
+  if (!stored) return null;
+  try {
+    const [versi, ivRaw, tagRaw, dataRaw] = stored.split('.');
+    if (versi !== 'v1') return null;
+    const decipher = createDecipheriv('aes-256-gcm', kunciRahasia(), Buffer.from(ivRaw, 'base64url'));
+    decipher.setAuthTag(Buffer.from(tagRaw, 'base64url'));
+    return Buffer.concat([decipher.update(Buffer.from(dataRaw, 'base64url')), decipher.final()]).toString('utf8');
+  } catch {
+    return null;
+  }
 }

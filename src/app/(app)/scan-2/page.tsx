@@ -7,9 +7,23 @@ import { playForTone, vibrate } from '@/lib/audio';
 import { sendOrQueue } from '@/lib/offline-queue';
 import { toast } from '@/components/Toast';
 import { fmtNumber, fmtTime } from '@/lib/date';
-import { IconPrint } from '@/components/Icons';
+import { IconPlus, IconPrint } from '@/components/Icons';
 
 type Expedisi = { id: number; code: string; name: string; ocsShipper: string; active: boolean };
+
+type BasketRow = {
+  id: number;
+  code: string;
+  status: string;
+  areaId: string;
+  createdAt: string;
+  dibuatOleh: string;
+  jumlahItem: number;
+  ocsDocNo: string | null;
+  selesai: boolean;
+  sudahDipakai: boolean;
+  bisaDipakai: boolean;
+};
 
 type OpenResult = {
   docId: number;
@@ -18,6 +32,9 @@ type OpenResult = {
   ocsDocId: number | null;
   ocsDocNo: string | null;
   ocsWarning: string | null;
+  peringatan: string | null;
+  sudahDipakai: boolean;
+  jumlahItem: number;
   totalValid: number;
   totalNotValid: number;
 };
@@ -66,7 +83,10 @@ export default function Scan2Page() {
   const [expedisiList, setExpedisiList] = useState<Expedisi[]>([]);
   const [expedisiId, setExpedisiId] = useState<number | ''>('');
   const [areaId] = useState(AREA);
-  const [basketInput, setBasketInput] = useState('');
+  const [basketList, setBasketList] = useState<BasketRow[]>([]);
+  const [basketDipilih, setBasketDipilih] = useState<string>('');
+  const [muatBasket, setMuatBasket] = useState(false);
+  const [scanBasket, setScanBasket] = useState('');
   const [sesi, setSesi] = useState<OpenResult | null>(null);
   const [st, setSt] = useState<StateResult | null>(null);
   const [value, setValue] = useState('');
@@ -93,6 +113,66 @@ export default function Scan2Page() {
     }
   }, []);
 
+  const muatBasketList = useCallback(async () => {
+    if (!expedisiId) {
+      setBasketList([]);
+      return;
+    }
+    setMuatBasket(true);
+    const res = await apiGet<{ rows: BasketRow[] }>(`/api/baskets/tersedia?expedisi=${expedisiId}`);
+    setMuatBasket(false);
+    if (res.ok) {
+      setBasketList(res.data.rows);
+      setBasketDipilih((kode) => (res.data.rows.some((b) => b.code === kode && b.bisaDipakai) ? kode : ''));
+    }
+  }, [expedisiId]);
+
+  useEffect(() => {
+    if (!sesi) void muatBasketList();
+  }, [muatBasketList, sesi]);
+
+  const generate = async () => {
+    if (!expedisiId) return;
+    setBusy(true);
+    const res = await apiPost<{ id: number; code: string }>('/api/baskets/generate', {
+      expedisiId,
+      areaId: AREA,
+    });
+    setBusy(false);
+    if (!res.ok) {
+      toast('error', res.error);
+      return;
+    }
+    toast('success', `Basket ${res.data.code} dibuat. Cetak labelnya lalu tempel di keranjang.`);
+    setBasketDipilih(res.data.code);
+    await muatBasketList();
+    window.open(`/label/${res.data.code}`, '_blank');
+  };
+
+  const pilihLewatScan = (kode: string) => {
+    const bersih = kode.trim().toUpperCase();
+    if (!bersih) return;
+    setScanBasket('');
+    const ketemu = basketList.find((b) => b.code === bersih);
+    if (!ketemu) {
+      toast('error', `Basket ${bersih} tidak ada di daftar ekspedisi ini hari ini.`);
+      playForTone('failed');
+      return;
+    }
+    if (!ketemu.bisaDipakai) {
+      toast('error', `Basket ${bersih} SUDAH PERNAH DIGUNAKAN dan manifestnya sudah dikirim ke OCS.`);
+      playForTone('failed');
+      return;
+    }
+    setBasketDipilih(bersih);
+    if (ketemu.sudahDipakai) {
+      toast('warning', `Basket ${bersih} sudah pernah digunakan — berisi ${ketemu.jumlahItem} resi.`);
+      playForTone('double');
+    } else {
+      playForTone('success');
+    }
+  };
+
   const muatState = useCallback(async (docId: number) => {
     const res = await apiGet<StateResult>(`/api/scan2/state/${docId}`);
     if (res.ok) setSt(res.data);
@@ -114,16 +194,26 @@ export default function Scan2Page() {
   }, [sesi]);
 
   const mulai = async () => {
-    if (!expedisiId) return;
+    if (!expedisiId || !basketDipilih) return;
+    const dipilih = basketList.find((b) => b.code === basketDipilih);
+    if (dipilih?.sudahDipakai) {
+      const lanjut = confirm(
+        `Basket ${dipilih.code} sudah pernah digunakan dan berisi ${dipilih.jumlahItem} resi.\n\n` +
+          'Melanjutkan berarti menambahkan scan ke basket yang sama. Lanjutkan?',
+      );
+      if (!lanjut) return;
+    }
+
     setBusy(true);
     const res = await apiPost<OpenResult>('/api/scan2/open', {
       expedisiId,
       areaId,
-      basketCode: basketInput.trim() || null,
+      basketCode: basketDipilih,
     });
     setBusy(false);
     if (!res.ok) {
       toast('error', res.error);
+      void muatBasketList();
       return;
     }
     setSesi(res.data);
@@ -132,14 +222,17 @@ export default function Scan2Page() {
     } catch {
       /* abaikan */
     }
+    if (res.data.peringatan) toast('warning', res.data.peringatan);
     if (res.data.ocsWarning) toast('warning', `OCS: ${res.data.ocsWarning}`);
-    else toast('success', `Basket ${res.data.basket.code} siap. Dokumen OCS ${res.data.ocsDocNo ?? '-'}.`);
-    setBasketInput('');
+    else if (!res.data.peringatan) {
+      toast('success', `Basket ${res.data.basket.code} siap. Dokumen OCS ${res.data.ocsDocNo ?? '-'}.`);
+    }
   };
 
   const tutupSesi = () => {
     setSesi(null);
     setSt(null);
+    setBasketDipilih('');
     try {
       localStorage.removeItem(KEY);
     } catch {
@@ -212,67 +305,195 @@ export default function Scan2Page() {
       <div style={{ display: 'grid', gap: 'var(--gap)' }}>
         <h1 className="page-title">Scan 2 — Manifest</h1>
         <p style={{ color: 'var(--ink-label)', fontSize: 13, marginTop: -6 }}>
-          Pilih ekspedisi keranjang final, lalu sistem membuat nomor basket + QR untuk ditempel. Hasil scan di
-          sini yang dikirim ke OCS.
+          Pilih ekspedisi, lalu pilih keranjang yang sudah dibuat hari itu — atau tekan Generate basket baru dan
+          cetak labelnya. Hasil scan di keranjang inilah yang dikirim ke OCS.
         </p>
 
-        <div className="card" style={{ display: 'grid', gap: 12, maxWidth: 520 }}>
-          <div>
-            <label className="field-label" htmlFor="exp">
-              Ekspedisi
-            </label>
-            <select
-              id="exp"
-              className="select-field"
-              value={expedisiId}
-              onChange={(e) => setExpedisiId(Number(e.target.value))}
-            >
-              {expedisiList.map((e) => (
-                <option key={e.id} value={e.id}>
-                  {e.code} — {e.name} (OCS: {e.ocsShipper})
-                </option>
-              ))}
-            </select>
-          </div>
+        <div className="card" style={{ display: 'grid', gap: 12, maxWidth: 640 }}>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+            <div style={{ flex: 1, minWidth: 220 }}>
+              <label className="field-label" htmlFor="exp">
+                Ekspedisi
+              </label>
+              <select
+                id="exp"
+                className="select-field"
+                value={expedisiId}
+                onChange={(e) => {
+                  setExpedisiId(Number(e.target.value));
+                  setBasketDipilih('');
+                }}
+              >
+                {expedisiList.map((e) => (
+                  <option key={e.id} value={e.id}>
+                    {e.code} — {e.name} (OCS: {e.ocsShipper})
+                  </option>
+                ))}
+              </select>
+            </div>
 
-          <div>
-            <span className="field-label">Area</span>
-            <div
-              className="input-field"
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                background: 'var(--bg-sunken)',
-                color: 'var(--ink)',
-                fontWeight: 600,
-              }}
-            >
-              {AREA}
-              <span className="badge badge-neutral" style={{ marginLeft: 'auto' }}>
-                tetap
-              </span>
+            <div style={{ minWidth: 120 }}>
+              <span className="field-label">Area</span>
+              <div
+                className="input-field"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  background: 'var(--bg-sunken)',
+                  color: 'var(--ink)',
+                  fontWeight: 600,
+                }}
+              >
+                {AREA}
+              </div>
             </div>
           </div>
 
           <div>
-            <label className="field-label" htmlFor="bkt">
-              Basket (kosongkan untuk membuat baru)
+            <label className="field-label" htmlFor="sb">
+              Scan QR basket (atau pilih di daftar bawah)
             </label>
             <input
-              id="bkt"
+              id="sb"
               className="input-field mono"
-              value={basketInput}
-              onChange={(e) => setBasketInput(e.target.value.toUpperCase())}
-              placeholder="Scan QR basket yang sudah ada"
+              value={scanBasket}
+              onChange={(e) => setScanBasket(e.target.value.toUpperCase())}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  pilihLewatScan(scanBasket);
+                }
+              }}
+              placeholder="SCAN LABEL KERANJANG"
+              enterKeyHint="done"
               autoComplete="off"
               spellCheck={false}
             />
           </div>
 
-          <button type="button" className="btn btn-primary" onClick={() => void mulai()} disabled={busy || !expedisiId}>
-            {busy ? 'Menyiapkan…' : 'Mulai manifest'}
-          </button>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              className="btn btn-secondary btn-block-sm"
+              onClick={() => void generate()}
+              disabled={busy || !expedisiId}
+            >
+              <IconPlus className="ico" /> Generate basket baru
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost btn-block-sm"
+              onClick={() => void muatBasketList()}
+              disabled={muatBasket}
+            >
+              {muatBasket ? 'Memuat…' : 'Muat ulang daftar'}
+            </button>
+          </div>
+        </div>
+
+        <div className="grid-card">
+          <div className="grid-toolbar">
+            <strong style={{ fontSize: 13 }}>Basket hari ini</strong>
+            <span className="muted" style={{ fontSize: 12 }}>
+              pilih satu, lalu Mulai manifest
+            </span>
+            <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--ink-label)' }}>
+              {fmtNumber(basketList.length)} basket
+            </span>
+          </div>
+          <div className="table-scroll">
+            <table className="rtable">
+              <colgroup>
+                <col style={{ width: '8%' }} />
+                <col style={{ width: '26%' }} />
+                <col style={{ width: '24%' }} />
+                <col style={{ width: '12%' }} />
+                <col style={{ width: '18%' }} />
+                <col style={{ width: '12%' }} />
+              </colgroup>
+              <thead>
+                <tr>
+                  <th>Pilih</th>
+                  <th>Kode basket</th>
+                  <th>Keadaan</th>
+                  <th className="n">Isi</th>
+                  <th className="p3">Dibuat</th>
+                  <th>Label</th>
+                </tr>
+              </thead>
+              <tbody>
+                {basketList.map((b) => (
+                  <tr
+                    key={b.id}
+                    style={b.code === basketDipilih ? { background: 'var(--bg-selected)' } : undefined}
+                  >
+                    <td data-label="Pilih">
+                      <input
+                        type="radio"
+                        name="basket"
+                        checked={b.code === basketDipilih}
+                        disabled={!b.bisaDipakai}
+                        onChange={() => setBasketDipilih(b.code)}
+                        style={{ width: 20, height: 20 }}
+                        aria-label={`Pilih basket ${b.code}`}
+                      />
+                    </td>
+                    <td className="mono title" data-label="Kode basket">
+                      {b.code}
+                    </td>
+                    <td data-label="Keadaan">
+                      {b.selesai ? (
+                        <span className="badge badge-neutral">Sudah dimanifest{b.ocsDocNo ? ` · ${b.ocsDocNo}` : ''}</span>
+                      ) : b.sudahDipakai ? (
+                        <span className="badge badge-critical">Sudah pernah digunakan</span>
+                      ) : (
+                        <span className="badge badge-positive">Baru, belum dipakai</span>
+                      )}
+                    </td>
+                    <td className="n" data-label="Isi">
+                      {fmtNumber(b.jumlahItem)}
+                    </td>
+                    <td className="mono p3" data-label="Dibuat">
+                      {fmtTime(b.createdAt)} · {b.dibuatOleh}
+                    </td>
+                    <td data-label="Label">
+                      <Link href={`/label/${b.code}`} target="_blank" className="btn btn-ghost btn-sm">
+                        <IconPrint className="ico" /> Print
+                      </Link>
+                    </td>
+                  </tr>
+                ))}
+                {!basketList.length && (
+                  <tr>
+                    <td colSpan={6} className="muted" data-label="Info">
+                      {muatBasket
+                        ? 'Memuat…'
+                        : 'Belum ada basket untuk ekspedisi ini hari ini. Tekan "Generate basket baru".'}
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          <div className="grid-foot">
+            <span>
+              {basketDipilih ? (
+                <>
+                  Terpilih: <strong className="mono">{basketDipilih}</strong>
+                </>
+              ) : (
+                'Belum ada basket yang dipilih.'
+              )}
+            </span>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => void mulai()}
+              disabled={busy || !expedisiId || !basketDipilih}
+            >
+              {busy ? 'Menyiapkan…' : 'Mulai manifest'}
+            </button>
+          </div>
         </div>
       </div>
     );

@@ -16,6 +16,9 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       data: {
         ...(body.name !== undefined ? { name: optStr(body.name, 80) ?? '' } : {}),
         ...(body.ocsShipper !== undefined ? { ocsShipper: optStr(body.ocsShipper, 40) ?? '' } : {}),
+        ...(body.ocsPrefix !== undefined
+          ? { ocsPrefix: (optStr(body.ocsPrefix, 3) ?? '').toUpperCase().slice(0, 3) || null }
+          : {}),
         ...(body.prefixes !== undefined ? { prefixes: optStr(body.prefixes, 1000) ?? '' } : {}),
         ...(body.sortOrder !== undefined ? { sortOrder: Number(body.sortOrder) || 0 } : {}),
         ...(body.active !== undefined ? { active: !!body.active } : {}),

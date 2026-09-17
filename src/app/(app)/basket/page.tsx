@@ -2,7 +2,9 @@
 
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
-import { apiGet } from '@/lib/client';
+import { apiGet, apiPost } from '@/lib/client';
+import { toast } from '@/components/Toast';
+import { IconPlus, IconPrint } from '@/components/Icons';
 import { fmtDateTime, fmtNumber, todayISO } from '@/lib/date';
 import ExportButton from '@/components/ExportButton';
 
@@ -34,6 +36,10 @@ export default function BasketPage() {
   const [status, setStatus] = useState('');
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
+  const [expedisiList, setExpedisiList] = useState<{ id: number; code: string; name: string; active: boolean }[]>([]);
+  const [genExpedisi, setGenExpedisi] = useState<number | ''>('');
+  const [genJumlah, setGenJumlah] = useState(1);
+  const [genBusy, setGenBusy] = useState(false);
 
   const muat = useCallback(async () => {
     setLoading(true);
@@ -47,9 +53,75 @@ export default function BasketPage() {
     void muat();
   }, [muat]);
 
+  useEffect(() => {
+    void apiGet<{ id: number; code: string; name: string; active: boolean }[]>('/api/expedisi').then((r) => {
+      if (r.ok) {
+        const aktif = r.data.filter((e) => e.active);
+        setExpedisiList(aktif);
+        if (aktif[0]) setGenExpedisi(aktif[0].id);
+      }
+    });
+  }, []);
+
+  const generate = async () => {
+    if (!genExpedisi) return;
+    setGenBusy(true);
+    const dibuat: string[] = [];
+    for (let i = 0; i < Math.min(Math.max(genJumlah, 1), 20); i++) {
+      const res = await apiPost<{ code: string }>('/api/baskets/generate', { expedisiId: genExpedisi, areaId: 'Pusat' });
+      if (!res.ok) {
+        toast('error', res.error);
+        break;
+      }
+      dibuat.push(res.data.code);
+    }
+    setGenBusy(false);
+    if (dibuat.length) {
+      toast('success', `${dibuat.length} basket dibuat: ${dibuat.join(', ')}`);
+      dibuat.forEach((kode) => window.open(`/label/${kode}`, '_blank'));
+      await muat();
+    }
+  };
+
   return (
     <div style={{ display: 'grid', gap: 'var(--gap)' }}>
       <h1 className="page-title">Basket</h1>
+
+      <div className="card" style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'flex-end' }}>
+        <div style={{ minWidth: 200 }}>
+          <label className="field-label" htmlFor="ge">
+            Buat basket baru untuk
+          </label>
+          <select id="ge" className="select-field" value={genExpedisi} onChange={(e) => setGenExpedisi(Number(e.target.value))}>
+            {expedisiList.map((e) => (
+              <option key={e.id} value={e.id}>
+                {e.code} — {e.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div style={{ width: 110 }}>
+          <label className="field-label" htmlFor="gj">
+            Jumlah
+          </label>
+          <input
+            id="gj"
+            type="number"
+            min={1}
+            max={20}
+            className="input-field"
+            value={genJumlah}
+            onChange={(e) => setGenJumlah(Number(e.target.value) || 1)}
+          />
+        </div>
+        <button type="button" className="btn btn-primary" onClick={() => void generate()} disabled={genBusy || !genExpedisi}>
+          <IconPlus className="ico" /> {genBusy ? 'Membuat…' : 'Generate & cetak'}
+        </button>
+        <span className="muted" style={{ fontSize: 12, width: '100%' }}>
+          Setiap basket langsung dibuka halaman labelnya di tab baru untuk dicetak. Maksimal 20 sekali jalan —
+          izinkan pop-up di browser bila mencetak banyak.
+        </span>
+      </div>
 
       <div className="card" style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'flex-end' }}>
         <div style={{ minWidth: 150 }}>
@@ -124,7 +196,7 @@ export default function BasketPage() {
                   </td>
                   <td data-label="Label">
                     <Link href={`/label/${b.code}`} target="_blank" className="btn btn-ghost btn-sm">
-                      Cetak
+                      <IconPrint className="ico" /> Print
                     </Link>
                   </td>
                 </tr>

@@ -4,6 +4,7 @@ import { cleanResi } from '@/lib/resi';
 import { compactDate, dateOnly, todayISO } from '@/lib/date';
 import * as ocs from './ocs-client';
 import type { OcsScanPayload } from './ocs-client';
+import { kredensialUntukUser } from './ocs-credentials';
 
 export type Scan2Result = {
   status: 'OK' | 'DOUBLE' | 'NOT_IN_SCAN1' | 'INVALID' | 'REJECT';
@@ -18,22 +19,158 @@ export type Scan2Result = {
 };
 
 /**
- * Kode basket final.
- *   lengkap (bawaan) : JNT-20260917-001   -> 16 karakter, paling mudah dibaca
- *   pendek           : JNT1709001         -> 10 karakter, tanpa tanda "-"
- *
- * Bentuk "pendek" disediakan karena basketId dikirim apa adanya ke OCS;
- * kalau kolom di sana pendek atau menolak "-", cukup ubah BASKET_CODE_STYLE
- * tanpa menyentuh kode. Nomor urut tetap per ekspedisi per hari.
+ * BATAS KERAS: kolom basketId di OCS bertipe **varchar(10)**.
+ * Dipastikan 17 Sep 2026 lewat pesan asli OCS:
+ *   "22001: value too long for type character varying(10)"
+ * Kode yang lebih panjang ditolak SEBELUM dokumen manifest terbentuk, jadi
+ * panjang ini bukan preferensi tampilan — ini syarat agar data sampai ke OCS.
  */
-async function newBasketCode(expedisiCode: string, iso: string) {
+export const BASKET_MAXLEN = Math.max(6, Number(process.env.BASKET_CODE_MAXLEN || 10));
+
+/**
+ * Kode basket yang pasti muat.
+ *
+ *   <awalan 3><dd><MM><urut>   contoh: JNT1709001  (3+2+2+3 = 10)
+ *
+ * Awalan diambil dari `ocsPrefix` ekspedisi (atau 3 huruf pertama kodenya),
+ * sehingga SICEPAT -> SIC dan ANTERAJA -> ANT tetap muat. Tahun tidak ikut
+ * karena basket hanya hidup satu hari; nomor urut per ekspedisi per hari.
+ *
+ * Kalau suatu saat kolom OCS dilebarkan, naikkan BASKET_CODE_MAXLEN ke 16 dan
+ * bentuk panjang yang lebih mudah dibaca (JNT-20260917-001) dipakai otomatis.
+ */
+export function buildBasketCode(params: {
+  expedisiCode: string;
+  ocsPrefix?: string | null;
+  iso: string;
+  seq: number;
+}): string {
+  const { expedisiCode, ocsPrefix, iso, seq } = params;
+  const padat = compactDate(iso); // YYYYMMDD
+
+  const lengkap = `${expedisiCode}-${padat}-${String(seq).padStart(3, '0')}`;
+  if (lengkap.length <= BASKET_MAXLEN) return lengkap;
+
+  const awalan = (ocsPrefix || expedisiCode).replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 3);
+  const hari = padat.slice(6, 8);
+  const bulan = padat.slice(4, 6);
+  const lebarUrut = Math.max(2, BASKET_MAXLEN - awalan.length - 4);
+  return `${awalan}${hari}${bulan}${String(seq).padStart(lebarUrut, '0')}`.slice(0, BASKET_MAXLEN);
+}
+
+async function newBasketCode(expedisiCode: string, ocsPrefix: string | null, iso: string) {
   const seq = await nextSeq(`basket:${expedisiCode}:${iso}`);
-  const urut = String(seq).padStart(3, '0');
-  const pendek = (process.env.BASKET_CODE_STYLE || 'lengkap').toLowerCase() === 'pendek';
-  const code = pendek
-    ? `${expedisiCode}${compactDate(iso).slice(6, 8)}${compactDate(iso).slice(4, 6)}${urut}`
-    : `${expedisiCode}-${compactDate(iso)}-${urut}`;
-  return { code, seq };
+  return { code: buildBasketCode({ expedisiCode, ocsPrefix, iso, seq }), seq };
+}
+
+/**
+ * Buat keranjang final BARU tanpa menyentuh OCS.
+ * Dipakai tombol "Generate Basket": labelnya bisa langsung dicetak dan
+ * ditempel di keranjang, jauh sebelum operator mulai scan tahap 2.
+ */
+export async function generateBasket(
+  user: SessionUser,
+  params: { expedisiId: number; areaId: string; note?: string | null },
+) {
+  const expedisi = await prisma.expedisi.findUnique({ where: { id: params.expedisiId } });
+  if (!expedisi || !expedisi.active) throw new ApiError('Ekspedisi tidak ditemukan atau non-aktif.', 404);
+
+  const iso = todayISO();
+  const basket = await withRetry(async () => {
+    const { code, seq } = await newBasketCode(expedisi.code, expedisi.ocsPrefix, iso);
+    try {
+      return await prisma.basket.create({
+        data: {
+          code,
+          expedisiId: expedisi.id,
+          areaId: params.areaId,
+          date: dateOnly(iso),
+          seq,
+          status: 'OPEN',
+          note: params.note ?? null,
+          createdById: user.id,
+        },
+      });
+    } catch (e) {
+      if (isUniqueViolation(e)) throw new Error('write conflict basket code');
+      throw e;
+    }
+  });
+
+  await writeAudit(user.id, 'GENERATE_BASKET', 'Basket', basket.id, { code: basket.code });
+  return {
+    id: basket.id,
+    code: basket.code,
+    areaId: basket.areaId,
+    status: basket.status,
+    expedisi: { id: expedisi.id, code: expedisi.code, name: expedisi.name },
+    jumlahItem: 0,
+    sudahDipakai: false,
+  };
+}
+
+/**
+ * Basket milik satu ekspedisi pada satu tanggal, lengkap dengan penanda
+ * apakah sudah pernah dipakai — supaya operator tidak memakai ulang keranjang
+ * yang isinya sudah dimanifest.
+ */
+export async function daftarBasketTersedia(params: { expedisiId: number; tanggal?: string }) {
+  const iso = params.tanggal || todayISO();
+
+  type Row = {
+    id: number;
+    code: string;
+    status: string;
+    areaId: string;
+    note: string | null;
+    createdAt: Date;
+    createdBy: { name: string };
+    _count: { items: number };
+    docs: { id: number; status: string; ocsDocNo: string | null; totalValid: number }[];
+  };
+
+  const rows = (await prisma.basket.findMany({
+    where: { expedisiId: params.expedisiId, date: dateOnly(iso) },
+    orderBy: { seq: 'asc' },
+    select: {
+      id: true,
+      code: true,
+      status: true,
+      areaId: true,
+      note: true,
+      createdAt: true,
+      createdBy: { select: { name: true } },
+      _count: { select: { items: true } },
+      docs: {
+        orderBy: { id: 'desc' },
+        take: 1,
+        select: { id: true, status: true, ocsDocNo: true, totalValid: true },
+      },
+    },
+  })) as Row[];
+
+  return {
+    tanggal: iso,
+    rows: rows.map((b) => {
+      const doc = b.docs[0];
+      const selesai = b.status === 'DONE' || doc?.status === 'SUBMITTED';
+      return {
+        id: b.id,
+        code: b.code,
+        status: b.status,
+        areaId: b.areaId,
+        note: b.note,
+        createdAt: b.createdAt.toISOString(),
+        dibuatOleh: b.createdBy.name,
+        jumlahItem: b._count.items,
+        ocsDocNo: doc?.ocsDocNo ?? null,
+        selesai,
+        // "Sudah pernah digunakan" = sudah berisi resi atau dokumennya sudah jalan.
+        sudahDipakai: selesai || b._count.items > 0 || b.status === 'MANIFESTING',
+        bisaDipakai: !selesai,
+      };
+    }),
+  };
 }
 
 /**
@@ -55,13 +192,34 @@ export async function openDoc(
     ? await prisma.basket.findUnique({ where: { code: params.basketCode.trim().toUpperCase() } })
     : null;
 
-  if (basket && basket.status === 'DONE') {
-    throw new ApiError(`Basket ${basket.code} sudah selesai dimanifest.`);
+  if (basket) {
+    const sudahSubmit = await prisma.manifestDoc.count({
+      where: { basketId: basket.id, status: 'SUBMITTED' },
+    });
+    if (basket.status === 'DONE' || sudahSubmit > 0) {
+      throw new ApiError(
+        `Basket ${basket.code} SUDAH PERNAH DIGUNAKAN dan manifestnya sudah dikirim ke OCS. ` +
+          'Ambil keranjang lain atau tekan Generate Basket untuk membuat yang baru.',
+        409,
+      );
+    }
+    if (basket.expedisiId !== params.expedisiId) {
+      throw new ApiError(
+        `Basket ${basket.code} milik ekspedisi lain. Pilih basket yang sesuai ekspedisinya.`,
+        409,
+      );
+    }
+  }
+  if (params.basketCode && params.basketCode.trim().length > BASKET_MAXLEN) {
+    throw new ApiError(
+      `Kode basket maksimal ${BASKET_MAXLEN} karakter — itu batas kolom basketId di OCS. ` +
+        `"${params.basketCode.trim()}" (${params.basketCode.trim().length} karakter) pasti ditolak.`,
+    );
   }
 
   if (!basket) {
     basket = await withRetry(async () => {
-      const { code, seq } = await newBasketCode(expedisi.code, iso);
+      const { code, seq } = await newBasketCode(expedisi.code, expedisi.ocsPrefix, iso);
       try {
         return await prisma.basket.create({
           data: {
@@ -104,15 +262,19 @@ export async function openDoc(
     }));
 
   let ocsWarning: string | null = null;
+  const akun = await kredensialUntukUser(user.id);
   if (ocs.ocsEnabled()) {
     try {
-      const remote = await ocs.startManifest({
-        shipper: expedisi.ocsShipper,
-        areaId: params.areaId,
-        basketId: basket.code,
-        isProcessing: !!doc.ocsDocId,
-        docId: doc.ocsDocId,
-      });
+      const remote = await ocs.startManifest(
+        {
+          shipper: expedisi.ocsShipper,
+          areaId: params.areaId,
+          basketId: basket.code,
+          isProcessing: !!doc.ocsDocId,
+          docId: doc.ocsDocId,
+        },
+        akun,
+      );
       await prisma.manifestDoc.update({
         where: { id: doc.id },
         data: { ocsDocId: remote.DocId, ocsDocNo: remote.DocNo, lastError: null },
@@ -139,18 +301,29 @@ export async function openDoc(
     ocsWarning = 'Pengiriman ke OCS sedang dimatikan (OCS_ENABLED=false).';
   }
 
+  const jumlahItem = await prisma.scanItem.count({ where: { basketId: basket.id } });
+  const peringatan =
+    jumlahItem > 0
+      ? `Basket ${basket.code} sudah pernah digunakan dan berisi ${jumlahItem} resi. Scan berikutnya akan MENAMBAH ke basket yang sama.`
+      : null;
+
   await writeAudit(user.id, 'OPEN_DOC', 'ManifestDoc', doc.id, {
     basket: basket.code,
     shipper: expedisi.ocsShipper,
+    jumlahItem,
   });
 
   return {
     docId: doc.id,
+    jumlahItem,
+    sudahDipakai: jumlahItem > 0,
+    peringatan,
     basket: { id: basket.id, code: basket.code, areaId: basket.areaId },
     expedisi: { id: expedisi.id, code: expedisi.code, name: expedisi.name, ocsShipper: expedisi.ocsShipper },
     ocsDocId: doc.ocsDocId,
     ocsDocNo: doc.ocsDocNo,
     ocsWarning,
+    akunOcs: akun?.label ?? null,
     ...(await docTotals(doc.id)),
   };
 }
@@ -244,7 +417,7 @@ export async function scanSecond(user: SessionUser, docId: number, rawResi: stri
     await prisma.manifestCandidate.update({ where: { id: candidate.id }, data: { used: true } });
   } else if (ocs.ocsEnabled()) {
     try {
-      const check = await ocs.checkInvalidManifest(resi, doc.shipper);
+      const check = await ocs.checkInvalidManifest(resi, doc.shipper, await kredensialUntukUser(user.id));
       if (!check.ok) return fail('INVALID', `${resi} ditolak OCS: ${check.reason}`, check.reason);
       orderId = check.orderId;
       tracking = check.trackingNumber || resi;
@@ -336,6 +509,7 @@ export async function syncDoc(docId: number): Promise<{ sent: number; error: str
     await ocs.saveTemporaryManifest(
       { shipper: doc.shipper, basketId: doc.basketCode, areaId: doc.areaId, docId: doc.ocsDocId },
       payloadOf(pending),
+      await kredensialUntukUser(doc.createdById),
     );
     const now = new Date();
     await prisma.manifestScan.updateMany({
@@ -397,6 +571,7 @@ export async function submitDoc(user: SessionUser, docId: number) {
     await ocs.submitManifest(
       { shipper: doc.shipper, basketId: doc.basketCode, areaId: doc.areaId, docId: doc.ocsDocId },
       payloadOf(rows),
+      await kredensialUntukUser(doc.createdById),
     );
     const now = new Date();
     await prisma.manifestDoc.update({
@@ -480,14 +655,19 @@ export async function flushOutbox(limit = 20) {
       const doc = await prisma.manifestDoc.findUnique({ where: { id: job.docId } });
       if (!doc) throw new Error('Dokumen sudah tidak ada.');
 
+      const akunDoc = await kredensialUntukUser(doc.createdById);
+
       if (!doc.ocsDocId && ocs.ocsEnabled()) {
         const basket = await prisma.basket.findUnique({ where: { id: doc.basketId } });
-        const remote = await ocs.startManifest({
-          shipper: doc.shipper,
-          areaId: doc.areaId,
-          basketId: doc.basketCode,
-          isProcessing: false,
-        });
+        const remote = await ocs.startManifest(
+          {
+            shipper: doc.shipper,
+            areaId: doc.areaId,
+            basketId: doc.basketCode,
+            isProcessing: false,
+          },
+          akunDoc,
+        );
         await prisma.manifestDoc.update({
           where: { id: doc.id },
           data: { ocsDocId: remote.DocId, ocsDocNo: remote.DocNo },
@@ -507,6 +687,7 @@ export async function flushOutbox(limit = 20) {
         await ocs.submitManifest(
           { shipper: doc.shipper, basketId: doc.basketCode, areaId: doc.areaId, docId: doc.ocsDocId },
           payloadOf(rows),
+          akunDoc,
         );
         const now = new Date();
         await prisma.manifestDoc.update({
@@ -541,4 +722,78 @@ export async function flushOutbox(limit = 20) {
     }
   }
   return { processed: jobs.length, results };
+}
+
+/**
+ * Perbaiki basket yang terlanjur dibuat dengan kode kepanjangan (>10 karakter).
+ * Dokumennya belum pernah terbentuk di OCS, jadi mengganti kodenya aman:
+ * nomor urut dipertahankan, hanya bentuk kodenya yang dipendekkan.
+ * Basket yang sudah SUBMITTED tidak disentuh.
+ */
+export async function perbaikiKodeBasket(user: SessionUser) {
+  type Row = {
+    id: number;
+    code: string;
+    seq: number;
+    date: Date;
+    status: string;
+    expedisi: { code: string; ocsPrefix: string | null };
+  };
+
+  const semua = (await prisma.basket.findMany({
+    where: { status: { not: 'DONE' } },
+    select: {
+      id: true,
+      code: true,
+      seq: true,
+      date: true,
+      status: true,
+      expedisi: { select: { code: true, ocsPrefix: true } },
+    },
+  })) as Row[];
+
+  const perlu = semua.filter((b) => b.code.length > BASKET_MAXLEN);
+  const hasil: { lama: string; baru: string; ok: boolean; pesan?: string }[] = [];
+
+  for (const b of perlu) {
+    const iso = b.date.toISOString().slice(0, 10);
+    let baru = buildBasketCode({
+      expedisiCode: b.expedisi.code,
+      ocsPrefix: b.expedisi.ocsPrefix,
+      iso,
+      seq: b.seq,
+    });
+
+    // Kalau kode pendeknya bentrok (mis. dua ekspedisi berawalan sama), ambil urut baru.
+    const bentrok = await prisma.basket.findUnique({ where: { code: baru } });
+    if (bentrok && bentrok.id !== b.id) {
+      const seqBaru = await nextSeq(`basket:${b.expedisi.code}:${iso}`);
+      baru = buildBasketCode({
+        expedisiCode: b.expedisi.code,
+        ocsPrefix: b.expedisi.ocsPrefix,
+        iso,
+        seq: seqBaru,
+      });
+    }
+
+    try {
+      await withRetry(() => prisma.basket.update({ where: { id: b.id }, data: { code: baru } }));
+      await prisma.manifestDoc.updateMany({
+        where: { basketId: b.id, status: { not: 'SUBMITTED' } },
+        data: { basketCode: baru, lastError: null },
+      });
+      await writeAudit(user.id, 'RENAME_BASKET', 'Basket', b.id, { lama: b.code, baru });
+      hasil.push({ lama: b.code, baru, ok: true });
+    } catch (e) {
+      hasil.push({ lama: b.code, baru, ok: false, pesan: e instanceof Error ? e.message : 'gagal' });
+    }
+  }
+
+  return {
+    batas: BASKET_MAXLEN,
+    diperiksa: semua.length,
+    diperbaiki: hasil.filter((h) => h.ok).length,
+    gagal: hasil.filter((h) => !h.ok).length,
+    hasil,
+  };
 }
