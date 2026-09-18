@@ -68,13 +68,18 @@ Alasan penolakan yang dikenal OCS (dari berkas suara di bundelnya):
 
 ## 5. Cara aplikasi ini memakainya
 
-1. **Scan 1** tidak menyentuh OCS sama sekali — murni menghitung resi masuk.
+1. **Scan 1** tidak memanggil OCS sama sekali — murni menghitung resi masuk.
+   Kalau pola nomor yang discan tidak cocok dengan prefix ekspedisi mana pun
+   (biasanya karena yang ditembak barcode ORDER ID), nomornya dicari di tabel
+   lokal `OrderLookup`. Tabel itu diisi dari daftar `Items` yang sudah diambil
+   Scan 2 saat membuka dokumen, jadi tetap **nol panggilan OCS** di Scan 1.
 2. **Scan 2** membuka dokumen (`OrderNotManifestedV2`), menyalin `Items` ke
    tabel `ManifestCandidate` supaya validasi tiap scan cukup satu query
    berindeks, persis pola aplikasi OCS sendiri.
 3. Resi yang tidak ada di kandidat ditanyakan ke `CheckInvalidManifest`.
-4. Tiap 50 scan dan tiap kali tombol Sinkron ditekan:
-   `SaveTemporaryManifestV2` per 100 baris.
+4. `SaveTemporaryManifestV2` per 100 baris, dipicu tiap 8 detik ATAU tiap 20
+   scan tertunda (mana yang lebih dulu), dijalankan lewat `after()` Next.js
+   sesudah balasan dikirim ke operator.
 5. Tombol Selesai: sinkron dulu, lalu `SubmitManifestV2` dengan SELURUH baris
    valid dokumen itu.
 6. **Setiap kegagalan jaringan tidak pernah membatalkan scan.** Scan sudah
@@ -87,3 +92,26 @@ Alasan penolakan yang dikenal OCS (dari berkas suara di bundelnya):
   Verifikasi akhir harus dijalankan dari mesin user: `npm run ocs:test`.
 - Di browser OCS sendiri, `fetch`/XHR dari devtools menggantung karena service
   worker Workbox — itu masalah browser, bukan API-nya.
+
+## 7. Penarikan daftar order berkala — BELUM diaktifkan
+
+`OrderNotManifestedV2` adalah satu-satunya endpoint yang mengembalikan
+pasangan `OrderId` ↔ `TrackingNumber` untuk satu kurir sekaligus. Menariknya
+secara berkala akan membuat `OrderLookup` lengkap sejak awal hari, bukan
+menunggu Scan 2 membuka dokumen pertama.
+
+**Belum dipakai karena satu hal yang belum terjawab:** endpoint itu juga yang
+dipakai OCS untuk MEMBUKA dokumen manifest, dan balasannya berisi `DocId`.
+Kalau setiap pemanggilan membuat dokumen baru, penarikan berkala akan
+meninggalkan dokumen menggantung di OCS setiap kali jalan.
+
+Jalankan ini dari PC yang punya akses ke OCS untuk memastikan:
+
+```
+npm run ocs:orders            # kurir J&T, area Pusat
+npm run ocs:orders -- SiCepat
+```
+
+Skrip itu menghitung dokumen menggantung sebelum dan sesudah pemanggilan, lalu
+menyimpulkan aman atau tidak. Baru setelah hasilnya AMAN, penarikan berkala
+layak dibuat.

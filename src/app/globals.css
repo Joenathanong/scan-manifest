@@ -835,20 +835,25 @@ body {
 .scan-flash[data-tone='success'] { background: rgba(20, 118, 60, .97); }
 .scan-flash[data-tone='double'] { background: rgba(176, 116, 0, .97); }
 .scan-flash[data-tone='failed'] { background: rgba(166, 20, 20, .97); }
-.scan-flash-ikon { font-size: clamp(40px, 6vw, 72px); line-height: 1; font-weight: 900; opacity: .9; }
+.scan-flash-ikon { font-size: clamp(30px, 4.4vw, 56px); line-height: 1; font-weight: 900; opacity: .85; }
 .scan-flash-exp {
-  font-size: clamp(34px, 7vw, 96px);
+  font-size: clamp(24px, 4.4vw, 58px);
   font-weight: 900;
   line-height: 1.05;
   letter-spacing: -.02em;
-  margin-top: 8px;
+  margin-top: 6px;
 }
-.scan-flash-status { font-size: clamp(16px, 2.6vw, 32px); font-weight: 700; margin-top: 6px; opacity: .95; }
+.scan-flash-status { font-size: clamp(14px, 2vw, 26px); font-weight: 700; margin-top: 4px; opacity: .95; }
+/* Nomor resi dibuat sebesar nama ekspedisinya: yang dicocokkan operator dengan
+   label di paket adalah nomornya, bukan nama kurirnya. */
 .scan-flash-resi {
   font-family: var(--font-mono);
-  font-size: clamp(14px, 1.8vw, 22px);
-  margin-top: 14px;
-  opacity: .85;
+  font-size: clamp(28px, 6vw, 76px);
+  font-weight: 800;
+  line-height: 1.08;
+  letter-spacing: -.01em;
+  margin-top: 12px;
+  opacity: 1;
   word-break: break-all;
 }
 @keyframes scan-flash-masuk { from { opacity: 0; } to { opacity: 1; } }

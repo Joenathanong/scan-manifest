@@ -19,8 +19,13 @@ type Scan1Result = {
   message: string;
   resi: string;
   expedisi: string | null;
+  orderId?: string;
   totalHariIni: number;
 };
+
+type BarisEkspedisi = { expedisiId: number | null; code: string; name: string; jumlah: number };
+type BatchSubmit = { id: number; code: string; expedisiCode: string; jumlah: number; jam: string; oleh: string };
+type StatusSesi = { ringkasan: BarisEkspedisi[]; submits: BatchSubmit[]; belumSubmit: number };
 
 type Row = {
   id: number;
@@ -40,6 +45,8 @@ export default function Scan1Page() {
   const [totalHariIni, setTotalHariIni] = useState(0);
   const [antreanLokal, setAntreanLokal] = useState<string[]>([]);
   const [flash, setFlash] = useState<FlashData | null>(null);
+  const [sesi, setSesi] = useState<StatusSesi | null>(null);
+  const [submitBusy, setSubmitBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Popup layar penuh hanya muncul kalau setelannya menyala di perangkat ini.
@@ -52,12 +59,16 @@ export default function Scan1Page() {
   );
 
   const muat = useCallback(async () => {
-    const res = await apiGet<{ rows: Row[]; totalSaya: number; totalHariIni: number }>('/api/scan1?take=25');
-    if (res.ok) {
-      setRows(res.data.rows);
-      setTotalSaya(res.data.totalSaya);
-      setTotalHariIni(res.data.totalHariIni);
+    const [daftar, status] = await Promise.all([
+      apiGet<{ rows: Row[]; totalSaya: number; totalHariIni: number }>('/api/scan1?take=25'),
+      apiGet<StatusSesi>('/api/sesi'),
+    ]);
+    if (daftar.ok) {
+      setRows(daftar.data.rows);
+      setTotalSaya(daftar.data.totalSaya);
+      setTotalHariIni(daftar.data.totalHariIni);
     }
+    if (status.ok) setSesi(status.data);
   }, []);
 
   useEffect(() => {
@@ -144,6 +155,24 @@ export default function Scan1Page() {
     }
   };
 
+  const submit = async (baris: BarisEkspedisi | null) => {
+    const label = baris ? `${baris.code} (${baris.jumlah} resi)` : 'SEMUA ekspedisi';
+    if (!confirm(`Serahterimakan ${label}?\n\nDatanya tetap tersimpan dan tetap diproses di Scan 2 — yang dikunci hanya hitungannya.`)) return;
+    setSubmitBusy(true);
+    const res = await apiPost<{ batch: { code: string; expedisiCode: string; jumlah: number }[]; status: StatusSesi }>(
+      '/api/scan1/submit',
+      baris ? { expedisiId: baris.expedisiId } : { semua: true },
+    );
+    setSubmitBusy(false);
+    if (!res.ok) {
+      toast('error', res.error);
+      return;
+    }
+    const total = res.data.batch.reduce((n, b) => n + b.jumlah, 0);
+    toast('success', `${fmtNumber(total)} resi diserahterimakan (${res.data.batch.length} batch).`);
+    setSesi(res.data.status);
+  };
+
   const batalkan = async (id: number, resi: string) => {
     const res = await apiPost(`/api/items/${id}/void`, { alasan: 'Salah scan' });
     if (res.ok) {
@@ -217,6 +246,114 @@ export default function Scan1Page() {
           <span className={feed.resi ? 'scan-feed-ket' : undefined}>{feed.text}</span>
         </div>
       </div>
+
+      <div className="grid-card">
+        <div className="grid-toolbar">
+          <strong style={{ fontSize: 13 }}>Total per jasa kirim</strong>
+          <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--ink-label)' }}>
+            {fmtNumber(sesi?.belumSubmit ?? 0)} belum diserahkan
+          </span>
+        </div>
+        <div className="table-scroll">
+          <table className="rtable">
+            <colgroup>
+              <col style={{ width: '44%' }} />
+              <col style={{ width: '22%' }} />
+              <col style={{ width: '34%' }} />
+            </colgroup>
+            <thead>
+              <tr>
+                <th>Jasa kirim</th>
+                <th className="n">Jumlah</th>
+                <th>Serah terima</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(sesi?.ringkasan ?? []).map((r) => (
+                <tr key={r.code}>
+                  <td data-label="Jasa kirim">
+                    <span className="badge badge-brand">{r.code}</span>
+                  </td>
+                  <td className="n title" data-label="Jumlah">
+                    {fmtNumber(r.jumlah)}
+                  </td>
+                  <td data-label="Serah terima">
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => void submit(r)}
+                      disabled={submitBusy}
+                    >
+                      Submit
+                    </button>
+                  </td>
+                </tr>
+              ))}
+              {!sesi?.ringkasan.length && (
+                <tr>
+                  <td colSpan={3} className="muted" data-label="Info">
+                    Semua resi di batch ini sudah diserahterimakan.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+        <div className="grid-foot">
+          <span className="muted" style={{ fontSize: 12 }}>
+            Submit mengunci hitungan serah terima. Tidak mengirim ke OCS.
+          </span>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => void submit(null)}
+            disabled={submitBusy || !sesi?.ringkasan.length}
+          >
+            {submitBusy ? 'Memproses…' : 'Submit semua'}
+          </button>
+        </div>
+      </div>
+
+      {!!sesi?.submits.length && (
+        <div className="grid-card">
+          <div className="grid-toolbar">
+            <strong style={{ fontSize: 13 }}>Batch serah terima</strong>
+            <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--ink-label)' }}>
+              {fmtNumber(sesi.submits.length)} batch
+            </span>
+          </div>
+          <div className="table-scroll">
+            <table className="rtable">
+              <thead>
+                <tr>
+                  <th>Kode</th>
+                  <th>Jasa kirim</th>
+                  <th className="n">Resi</th>
+                  <th>Jam</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sesi.submits.map((b) => (
+                  <tr key={b.id}>
+                    <td className="mono title" data-label="Kode">
+                      {b.code}
+                    </td>
+                    <td data-label="Jasa kirim">
+                      <span className="badge badge-neutral">{b.expedisiCode}</span>
+                    </td>
+                    <td className="n" data-label="Resi">
+                      {fmtNumber(b.jumlah)}
+                    </td>
+                    <td className="mono" data-label="Jam">
+                      {fmtTime(b.jam)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       <div className="grid-card">
         <div className="grid-toolbar">

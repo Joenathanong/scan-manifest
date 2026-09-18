@@ -3,6 +3,7 @@ import { ApiError, writeAudit, type SessionUser } from '@/lib/api';
 import { cleanResi, detectExpedisi, parsePrefixes } from '@/lib/resi';
 import { compactDate, dateOnly, todayISO } from '@/lib/date';
 import { lupakan, memo } from '@/lib/cache';
+import { cariOrder } from './order-lookup';
 
 export type ScanTone = 'success' | 'double' | 'failed';
 
@@ -12,6 +13,9 @@ export type Scan1Result = {
   message: string;
   resi: string;
   expedisi: string | null;
+  /** Terisi kalau yang discan ternyata barcode order ID, bukan nomor resi. */
+  orderId?: string;
+  trackingNumber?: string;
   itemId?: number;
   totalHariIni: number;
 };
@@ -140,7 +144,25 @@ export async function scanFirst(user: SessionUser, rawResi: string): Promise<Sca
     };
   }
 
-  const expedisiId = code ? byCode.get(code) ?? null : null;
+  let expedisiId = code ? byCode.get(code) ?? null : null;
+  let kode = code;
+  let orderId: string | null = null;
+  let tracking: string | null = null;
+
+  // Pola nomornya tidak cocok dengan prefix ekspedisi mana pun — kemungkinan
+  // besar yang ditembak barcode ORDER ID, bukan nomor resi. Coba pemetaan
+  // order dari OCS sebelum menyerah dan menandainya "belum dikenali".
+  if (!expedisiId) {
+    const ketemu = await cariOrder(resi);
+    if (ketemu) {
+      orderId = ketemu.orderId;
+      tracking = ketemu.trackingNumber;
+      if (ketemu.expedisiId) {
+        expedisiId = ketemu.expedisiId;
+        kode = ketemu.expedisiCode ?? ketemu.shipper;
+      }
+    }
+  }
 
   try {
     const item = await prisma.scanItem.create({
@@ -152,14 +174,24 @@ export async function scanFirst(user: SessionUser, rawResi: string): Promise<Sca
         scanDate: dateOnly(iso),
         status: 'AWAITING_PICKUP',
         scan1ById: user.id,
+        // Disimpan supaya Scan 2 mengenali paket ini walau nanti yang ditembak
+        // identitasnya yang satunya lagi.
+        ocsOrderId: orderId,
+        ocsTracking: tracking,
       },
     });
     return {
       status: 'OK',
       tone: 'success',
-      message: code ? `${resi} tersimpan (${code}).` : `${resi} tersimpan — ekspedisi belum teridentifikasi.`,
+      message: kode
+        ? orderId
+          ? `${resi} tersimpan (${kode}, order ID).`
+          : `${resi} tersimpan (${kode}).`
+        : `${resi} tersimpan — ekspedisi belum teridentifikasi.`,
       resi,
-      expedisi: code,
+      expedisi: kode,
+      orderId: orderId ?? undefined,
+      trackingNumber: tracking ?? undefined,
       itemId: item.id,
       // Dihitung dari angka sebelum simpan + 1, bukan COUNT ulang. Menghemat
       // satu perjalanan lagi, dan angkanya persis sama.
@@ -173,7 +205,7 @@ export async function scanFirst(user: SessionUser, rawResi: string): Promise<Sca
         tone: 'double',
         message: `${resi} baru saja discan di perangkat lain.`,
         resi,
-        expedisi: code,
+        expedisi: kode,
         totalHariIni: totalSebelum,
       };
     }
@@ -236,6 +268,9 @@ export async function statusSesi(user: SessionUser, take = 300) {
       total: 0,
       dupCount: 0,
       jenisEkspedisi: [] as string[],
+      ringkasan: [] as BarisEkspedisi[],
+      submits: [] as BatchSubmit[],
+      belumSubmit: 0,
       totalHariIni: await countAwaitingToday(iso),
       tanggal: iso,
     };
@@ -249,7 +284,7 @@ export async function statusSesi(user: SessionUser, take = 300) {
     expedisi: { code: string; name: string } | null;
   };
 
-  const [rows, total] = await Promise.all([
+  const [rows, total, ringkasan, submits] = await Promise.all([
     prisma.scanItem.findMany({
       where: { sessionId: sesi.id, status: { not: 'VOID' } },
       orderBy: { id: 'desc' },
@@ -263,6 +298,8 @@ export async function statusSesi(user: SessionUser, take = 300) {
       },
     }),
     prisma.scanItem.count({ where: { sessionId: sesi.id, status: { not: 'VOID' } } }),
+    ringkasanEkspedisi(sesi.id),
+    daftarSubmit(sesi.id),
   ]);
 
   const daftar = rows as Row[];
@@ -288,6 +325,9 @@ export async function statusSesi(user: SessionUser, take = 300) {
     total,
     dupCount: sesi.dupCount,
     jenisEkspedisi: jenis,
+    ringkasan,
+    submits,
+    belumSubmit: ringkasan.reduce((n: number, r: BarisEkspedisi) => n + r.jumlah, 0),
     totalHariIni: await countAwaitingToday(iso),
     tanggal: iso,
   };
@@ -336,4 +376,163 @@ export async function voidItem(user: SessionUser, itemId: number, reason: string
   );
   await writeAudit(user.id, 'VOID_ITEM', 'ScanItem', itemId, { resi: item.resi, reason });
   return { ok: true };
+}
+
+/* ==================================================================
+ * SUBMIT SCAN 1 — serah terima per jasa kirim
+ *
+ * Submit di sini TIDAK menyentuh OCS dan tidak membentuk basket. Ia hanya
+ * mengunci hitungan: "sekian resi ekspedisi X sudah diserahterimakan jam
+ * sekian oleh siapa". Basket final tetap dibentuk di Scan 2 seperti biasa.
+ *
+ * Resi yang sudah disubmit hilang dari panel total (sudah diserahkan) tapi
+ * datanya utuh dan tetap muncul di daftar batch maupun laporan.
+ * ================================================================== */
+
+export type BarisEkspedisi = {
+  expedisiId: number | null;
+  code: string;
+  name: string;
+  jumlah: number;
+};
+
+export type BatchSubmit = {
+  id: number;
+  code: string;
+  expedisiCode: string;
+  jumlah: number;
+  jam: string;
+  oleh: string;
+};
+
+const BELUM_DIKENALI = 'BELUM DIKENALI';
+
+/** Total per ekspedisi untuk batch yang sedang berjalan (yang belum disubmit). */
+export async function ringkasanEkspedisi(sessionId: number): Promise<BarisEkspedisi[]> {
+  type Baris = { expedisiId: number | null; code: string | null; name: string | null; jumlah: bigint | number };
+  const rows = (await prisma.$queryRaw`
+    SELECT e.id AS expedisiId, e.code AS code, e.name AS name, COUNT(*) AS jumlah
+    FROM ScanItem i
+    LEFT JOIN Expedisi e ON e.id = i.expedisiId
+    WHERE i.sessionId = ${sessionId} AND i.submitId IS NULL AND i.status <> 'VOID'
+    GROUP BY e.id, e.code, e.name
+    ORDER BY COUNT(*) DESC
+  `) as Baris[];
+  return rows.map((r) => ({
+    expedisiId: r.expedisiId === null ? null : Number(r.expedisiId),
+    code: r.code ?? BELUM_DIKENALI,
+    name: r.name ?? 'Ekspedisi belum teridentifikasi',
+    jumlah: Number(r.jumlah),
+  }));
+}
+
+/** Batch serah terima yang sudah disubmit pada sesi ini. */
+export async function daftarSubmit(sessionId: number): Promise<BatchSubmit[]> {
+  type Row = {
+    id: number;
+    code: string;
+    expedisiCode: string;
+    jumlah: number;
+    createdAt: Date;
+    submittedById: number;
+  };
+  const rows = (await prisma.scanSubmit.findMany({
+    where: { sessionId },
+    orderBy: { id: 'desc' },
+    take: 50,
+  })) as Row[];
+  if (!rows.length) return [];
+
+  const nama = new Map<number, string>(
+    (
+      (await prisma.user.findMany({
+        where: { id: { in: [...new Set(rows.map((r) => r.submittedById))] } },
+        select: { id: true, name: true },
+      })) as { id: number; name: string }[]
+    ).map((u) => [u.id, u.name]),
+  );
+
+  return rows.map((r) => ({
+    id: r.id,
+    code: r.code,
+    expedisiCode: r.expedisiCode,
+    jumlah: r.jumlah,
+    jam: r.createdAt.toISOString(),
+    oleh: nama.get(r.submittedById) ?? '—',
+  }));
+}
+
+/**
+ * Submit satu ekspedisi. expedisiId null = kelompok "BELUM DIKENALI".
+ *
+ * Penguncian dilakukan dengan updateMany bersyarat submitId: null, jadi kalau
+ * dua operator menekan Submit bersamaan yang kedua hanya mengunci sisanya —
+ * tidak ada resi yang terhitung dua kali di dua batch berbeda.
+ */
+export async function submitEkspedisi(
+  user: SessionUser,
+  sessionId: number,
+  expedisiId: number | null,
+): Promise<{ code: string; expedisiCode: string; jumlah: number } | null> {
+  const iso = todayISO();
+
+  const ekspedisi = expedisiId
+    ? ((await prisma.expedisi.findUnique({
+        where: { id: expedisiId },
+        select: { code: true },
+      })) as { code: string } | null)
+    : null;
+  if (expedisiId && !ekspedisi) throw new ApiError('Ekspedisi tidak ditemukan.', 404);
+  const expedisiCode = ekspedisi?.code ?? BELUM_DIKENALI;
+
+  const seq = await nextSeq(`submit:${iso}`);
+  const code = `SRH-${compactDate(iso)}-${String(seq).padStart(3, '0')}`;
+
+  const submit = await prisma.scanSubmit.create({
+    data: {
+      code,
+      sessionId,
+      expedisiId,
+      expedisiCode,
+      jumlah: 0,
+      date: dateOnly(iso),
+      seq,
+      submittedById: user.id,
+    },
+  });
+
+  const { count } = await prisma.scanItem.updateMany({
+    where: {
+      sessionId,
+      submitId: null,
+      status: { not: 'VOID' },
+      expedisiId: expedisiId ?? null,
+    },
+    data: { submitId: submit.id },
+  });
+
+  if (count === 0) {
+    // Tidak ada yang terkunci — batalkan barisnya supaya tidak ada batch kosong.
+    await prisma.scanSubmit.delete({ where: { id: submit.id } });
+    return null;
+  }
+
+  await prisma.scanSubmit.update({ where: { id: submit.id }, data: { jumlah: count } });
+  await writeAudit(user.id, 'SUBMIT_SCAN1', 'ScanSubmit', submit.id, { expedisiCode, jumlah: count });
+
+  return { code, expedisiCode, jumlah: count };
+}
+
+/** Submit seluruh ekspedisi yang masih punya resi belum diserahterimakan. */
+export async function submitSemua(
+  user: SessionUser,
+  sessionId: number,
+): Promise<{ code: string; expedisiCode: string; jumlah: number }[]> {
+  const ringkasan = await ringkasanEkspedisi(sessionId);
+  const hasil: { code: string; expedisiCode: string; jumlah: number }[] = [];
+  for (const baris of ringkasan) {
+    const satu = await submitEkspedisi(user, sessionId, baris.expedisiId);
+    if (satu) hasil.push(satu);
+  }
+  return hasil;
 }

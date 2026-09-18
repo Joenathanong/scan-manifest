@@ -5,6 +5,7 @@ import { compactDate, dateOnly, todayISO } from '@/lib/date';
 import * as ocs from './ocs-client';
 import type { OcsScanPayload } from './ocs-client';
 import { kredensialUntukUser } from './ocs-credentials';
+import * as lookup from './order-lookup';
 
 export type Scan2Result = {
   status: 'OK' | 'DOUBLE' | 'NOT_IN_SCAN1' | 'INVALID' | 'REJECT';
@@ -283,6 +284,11 @@ export async function openDoc(
       doc.ocsDocNo = remote.DocNo;
 
       const items = Array.isArray(remote.Items) ? remote.Items : [];
+
+      // Sekalian salin ke pemetaan order global. Daftar ini sudah di tangan,
+      // jadi Scan 1 bisa mengenali barcode order ID tanpa memanggil OCS lagi.
+      void lookup.simpanDariItems(items, expedisi.ocsShipper).catch(() => undefined);
+
       await prisma.manifestCandidate.deleteMany({ where: { docId: doc.id } });
       for (let i = 0; i < items.length; i += 500) {
         await prisma.manifestCandidate.createMany({
@@ -531,6 +537,7 @@ export async function scanSecond(user: SessionUser, docId: number, rawResi: stri
       if (!check.ok) return fail('INVALID', `${resi} ditolak OCS: ${check.reason}`, check.reason);
       orderId = check.orderId;
       tracking = check.trackingNumber || resi;
+      void lookup.simpanSatu(orderId, tracking, doc.shipper).catch(() => undefined);
 
       // OCS baru saja memberi pasangan order ID <-> resi. Periksa ulang dobel
       // dengan identitas yang sekarang sudah lengkap.

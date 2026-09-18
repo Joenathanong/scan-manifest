@@ -16,7 +16,8 @@
     "ocs:test": "node --env-file=.env tools/ocs-test.mjs",
     "user:password": "node --env-file=.env tools/set-password.mjs",
     "db:reset-data": "node --env-file=.env tools/reset-data.mjs",
-    "users:import": "node --env-file=.env tools/import-users.mjs"
+    "users:import": "node --env-file=.env tools/import-users.mjs",
+    "ocs:orders": "node --env-file=.env tools/ocs-orders.mjs"
   },
   "dependencies": {
     "@prisma/client": "^6.16.1",

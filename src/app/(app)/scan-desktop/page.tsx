@@ -30,6 +30,9 @@ type Row = {
   ekspedisiNama: string | null;
 };
 
+type BarisEkspedisi = { expedisiId: number | null; code: string; name: string; jumlah: number };
+type BatchSubmit = { id: number; code: string; expedisiCode: string; jumlah: number; jam: string; oleh: string };
+
 type Status = {
   sesi: { id: number; code: string; operatorName: string; shift: string | null; mulai: string; dupCount: number } | null;
   rows: Row[];
@@ -38,6 +41,9 @@ type Status = {
   jenisEkspedisi: string[];
   totalHariIni: number;
   tanggal: string;
+  ringkasan: BarisEkspedisi[];
+  submits: BatchSubmit[];
+  belumSubmit: number;
 };
 
 type Scan1Result = {
@@ -46,6 +52,7 @@ type Scan1Result = {
   message: string;
   resi: string;
   expedisi: string | null;
+  orderId?: string;
   totalHariIni: number;
 };
 
@@ -63,6 +70,22 @@ function warnaEkspedisi(kode: string | null): string {
   return WARNA_TAG[n % WARNA_TAG.length];
 }
 
+/**
+ * Naikkan satu baris ringkasan di layar tanpa menunggu penyegaran dari server.
+ *
+ * Ekspedisi yang BELUM ada di daftar sengaja tidak ditambahkan sendiri di sini:
+ * barisnya butuh expedisiId asli dari server, dan menebaknya berarti tombol
+ * Submit baris itu bisa mengunci kelompok yang salah. Kalau begitu, pemanggil
+ * menyegarkan dari server saja.
+ */
+function naikkanRingkasan(lama: BarisEkspedisi[], kode: string | null): BarisEkspedisi[] | null {
+  const cari = kode ?? 'BELUM DIKENALI';
+  if (!lama.some((r) => r.code === cari)) return null;
+  return lama
+    .map((r) => (r.code === cari ? { ...r, jumlah: r.jumlah + 1 } : r))
+    .sort((a, b) => b.jumlah - a.jumlah);
+}
+
 export default function ScanDesktopPage() {
   const [st, setSt] = useState<Status | null>(null);
   const [nama, setNama] = useState('');
@@ -78,6 +101,7 @@ export default function ScanDesktopPage() {
   const [hasilCari, setHasilCari] = useState<string | null>(null);
   const [jam, setJam] = useState('');
   const [flash, setFlash] = useState<FlashData | null>(null);
+  const [submitBusy, setSubmitBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Popup layar penuh hanya muncul kalau setelannya menyala di perangkat ini.
@@ -153,6 +177,31 @@ export default function ScanDesktopPage() {
     void muat();
   };
 
+  const submit = async (baris: BarisEkspedisi | null) => {
+    const label = baris ? `${baris.code} (${baris.jumlah} resi)` : 'SEMUA ekspedisi';
+    if (!confirm(`Serahterimakan ${label}?\n\nResi yang sudah diserahterimakan tidak ikut terhitung lagi di panel ini, tapi datanya tetap tersimpan dan tetap diproses di Scan 2.`)) {
+      return;
+    }
+    setSubmitBusy(true);
+    const res = await apiPost<{ batch: { code: string; expedisiCode: string; jumlah: number }[]; status: Status }>(
+      '/api/scan1/submit',
+      baris ? { expedisiId: baris.expedisiId } : { semua: true },
+    );
+    setSubmitBusy(false);
+    if (!res.ok) {
+      toast('error', res.error);
+      return;
+    }
+    const total = res.data.batch.reduce((n, b) => n + b.jumlah, 0);
+    toast(
+      'success',
+      res.data.batch.length === 1
+        ? `${res.data.batch[0].code} — ${res.data.batch[0].expedisiCode}, ${fmtNumber(total)} resi diserahterimakan.`
+        : `${res.data.batch.length} batch dibuat, total ${fmtNumber(total)} resi diserahterimakan.`,
+    );
+    setSt(res.data.status);
+  };
+
   const kirim = async (mentah: string) => {
     const resi = mentah.trim().toUpperCase();
     if (!resi) return;
@@ -183,6 +232,9 @@ export default function ScanDesktopPage() {
     // dikirim ulang hanya untuk menambah satu baris. Penyegaran penuh tetap
     // jalan lewat timer 30 detik dan tombol "Muat ulang".
     if (d.status === 'OK') {
+      // Ekspedisi baru muncul di batch ini -> ringkasannya harus datang dari
+      // server supaya expedisiId-nya benar.
+      if (st && !naikkanRingkasan(st.ringkasan, d.expedisi)) void muat();
       setSt((lama) =>
         lama
           ? {
@@ -192,6 +244,8 @@ export default function ScanDesktopPage() {
               jenisEkspedisi: d.expedisi && !lama.jenisEkspedisi.includes(d.expedisi)
                 ? [...lama.jenisEkspedisi, d.expedisi]
                 : lama.jenisEkspedisi,
+              belumSubmit: lama.belumSubmit + 1,
+              ringkasan: naikkanRingkasan(lama.ringkasan, d.expedisi) ?? lama.ringkasan,
               rows: [
                 {
                   id: -Date.now(),
@@ -483,6 +537,100 @@ export default function ScanDesktopPage() {
               {!st.rows.length && (
                 <div className="disp-row" style={{ color: 'var(--abu)' }}>
                   Belum ada resi discan di batch ini.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="disp-kolom">
+          <div className="disp-card">
+            <div className="disp-card-head">
+              🚚 Total per Jasa Kirim
+              <span className="disp-spacer" />
+              <span className="disp-badge">{fmtNumber(st.belumSubmit)} BELUM DISERAHKAN</span>
+            </div>
+            <div style={{ overflowX: 'auto' }}>
+              <table className="disp-tabel">
+                <thead>
+                  <tr>
+                    <th>Jasa Kirim</th>
+                    <th style={{ width: 90 }}>Jumlah</th>
+                    <th style={{ width: 130 }}>Serah Terima</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {st.ringkasan.map((r) => (
+                    <tr key={r.code}>
+                      <td>
+                        <span className="disp-tag" data-warna={warnaEkspedisi(r.code)}>
+                          {r.code}
+                        </span>
+                      </td>
+                      <td style={{ fontWeight: 800, color: 'var(--navy)' }}>{fmtNumber(r.jumlah)}</td>
+                      <td>
+                        <button
+                          type="button"
+                          className="disp-btn disp-btn-putih"
+                          style={{ height: 30, fontSize: 11.5 }}
+                          onClick={() => void submit(r)}
+                          disabled={submitBusy}
+                        >
+                          Submit
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {!st.ringkasan.length && (
+                    <tr>
+                      <td colSpan={3} style={{ color: 'var(--abu)' }}>
+                        Semua resi di batch ini sudah diserahterimakan.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <div className="disp-card-body" style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+              <button
+                type="button"
+                className="disp-btn disp-btn-navy"
+                style={{ height: 38 }}
+                onClick={() => void submit(null)}
+                disabled={submitBusy || !st.ringkasan.length}
+              >
+                ✅ {submitBusy ? 'Memproses…' : 'Submit semua jasa kirim'}
+              </button>
+              <span style={{ fontSize: 11.5, color: 'var(--abu)' }}>
+                Submit hanya mengunci hitungan serah terima. Tidak mengirim apa pun ke OCS dan tidak membentuk
+                basket — basket tetap dibuat di Scan 2.
+              </span>
+            </div>
+          </div>
+
+          <div className="disp-card">
+            <div className="disp-card-head">
+              📑 Batch Serah Terima
+              <span className="disp-spacer" />
+              <span className="disp-badge">{fmtNumber(st.submits.length)} BATCH</span>
+            </div>
+            <div className="disp-list">
+              {st.submits.map((b) => (
+                <div className="disp-row" key={b.id}>
+                  <span className="disp-resi">{b.code}</span>
+                  <span className="disp-tag" data-warna={warnaEkspedisi(b.expedisiCode)}>
+                    {b.expedisiCode}
+                  </span>
+                  <span className="disp-spacer" style={{ marginLeft: 'auto' }} />
+                  <span style={{ fontWeight: 800, color: 'var(--navy)' }}>{fmtNumber(b.jumlah)} resi</span>
+                  <span className="disp-jam-kecil">
+                    {fmtTime(b.jam)} · {b.oleh}
+                  </span>
+                </div>
+              ))}
+              {!st.submits.length && (
+                <div className="disp-row" style={{ color: 'var(--abu)' }}>
+                  Belum ada serah terima di batch ini.
                 </div>
               )}
             </div>

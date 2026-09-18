@@ -162,6 +162,11 @@ model ScanItem {
   ocsReason     String?  @db.VarChar(191)
   ocsSentAt     DateTime?
 
+  // Batch serah terima Scan 1. Terisi saat operator menekan Submit per
+  // ekspedisi — resi yang sudah disubmit tidak ikut dihitung lagi di panel
+  // total, tapi datanya tetap utuh.
+  submitId   Int?
+
   voidedAt   DateTime?
   voidedById Int?
   voidReason String?   @db.VarChar(191)
@@ -193,6 +198,9 @@ model ScanItem {
   // hanya lewat nomor yang discan di tahap 1.
   @@index([ocsOrderId])
   @@index([ocsTracking])
+  @@index([submitId])
+  // Panel total per ekspedisi: hitung per sesi yang belum disubmit.
+  @@index([sessionId, submitId])
 }
 
 // Sesi scan pertama: dibuat otomatis per operator per hari.
@@ -345,4 +353,58 @@ model AuditLog {
   @@index([userId])
   @@index([entity, entityId])
   @@index([at])
+}
+
+/**
+ * Batch serah terima Scan 1 — satu baris per ekspedisi per submit.
+ *
+ * Submit di Scan 1 TIDAK menyentuh OCS dan tidak membentuk basket. Ia hanya
+ * mengunci hitungan: "sekian resi ekspedisi X sudah diserahterimakan pada jam
+ * sekian oleh siapa". Basket final tetap dibentuk di Scan 2.
+ */
+model ScanSubmit {
+  id           Int      @id @default(autoincrement())
+  code         String   @unique @db.VarChar(48)
+  sessionId    Int
+  // null = kelompok resi yang ekspedisinya belum dikenali
+  expedisiId   Int?
+  // Disalin supaya laporan lama tetap terbaca walau master ekspedisi berubah.
+  expedisiCode String   @db.VarChar(32)
+  jumlah       Int
+  date         DateTime @db.Date
+  seq          Int
+  note         String?  @db.VarChar(255)
+  submittedById Int
+  createdAt    DateTime @default(now())
+
+  @@index([sessionId])
+  @@index([expedisiId])
+  @@index([submittedById])
+  @@index([date])
+}
+
+/**
+ * Pemetaan order ID <-> nomor resi <-> kurir, hasil salinan dari daftar order
+ * belum-manifest milik OCS.
+ *
+ * Gunanya: di Scan 1 operator kadang menembak barcode ORDER ID, bukan nomor
+ * resi. Tanpa pemetaan ini ekspedisinya tidak bisa ditebak dari pola nomor,
+ * dan resi itu masuk sebagai "BELUM DIKENALI" sampai Scan 2.
+ *
+ * Diisi otomatis setiap Scan 2 membuka dokumen manifest (daftar Items dari OCS
+ * disalin ke sini sekalian), jadi tidak ada panggilan OCS tambahan.
+ */
+model OrderLookup {
+  id             Int      @id @default(autoincrement())
+  orderId        String   @unique @db.VarChar(64)
+  trackingNumber String   @db.VarChar(64)
+  // Nilai apa adanya dari OCS, mis. "J&T", "SiCepat".
+  shipper        String   @db.VarChar(40)
+  expedisiId     Int?
+  syncedAt       DateTime @default(now())
+
+  @@index([trackingNumber])
+  @@index([shipper])
+  @@index([expedisiId])
+  @@index([syncedAt])
 }
