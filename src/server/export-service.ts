@@ -14,8 +14,8 @@ export type ExportFilter = {
 };
 
 const LABEL_STATUS: Record<string, string> = {
-  AWAITING_PICKUP: 'Awaiting to pickup',
-  PICKUP: 'Pickup',
+  AWAITING_PICKUP: 'Awaiting to shipment',
+  PICKUP: 'Awaiting to pickup',
   VOID: 'Dibatalkan',
 };
 
@@ -203,7 +203,7 @@ export async function buildScanWorkbook(filter: ExportFilter) {
 
   /* ---------------- Sheet 2: Ringkasan ---------------- */
   const sRingkas = wb.addWorksheet('Ringkasan');
-  sRingkas.addRow(['Tanggal', 'Awaiting to pickup', 'Pickup', 'Dibatalkan', 'Total']);
+  sRingkas.addRow(['Tanggal', 'Awaiting to shipment', 'Awaiting to pickup', 'Dibatalkan', 'Total']);
 
   const perTanggal = new Map<string, { awaiting: number; pickup: number; void: number }>();
   const perExpedisi = new Map<string, { awaiting: number; pickup: number; void: number }>();
@@ -226,7 +226,7 @@ export async function buildScanWorkbook(filter: ExportFilter) {
     );
 
   sRingkas.addRow([]);
-  const barisJudul2 = sRingkas.addRow(['Ekspedisi', 'Awaiting to pickup', 'Pickup', 'Dibatalkan', 'Total']);
+  const barisJudul2 = sRingkas.addRow(['Ekspedisi', 'Awaiting to shipment', 'Awaiting to pickup', 'Dibatalkan', 'Total']);
   barisJudul2.eachCell((cell) => {
     cell.font = { bold: true, size: 10, color: { argb: HEAD_FG } };
     cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: HEAD_BG } };

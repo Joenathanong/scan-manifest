@@ -176,13 +176,45 @@ export default function ScanDesktopPage() {
     setFeed({ nada: d.tone, teks: d.message });
     setTerakhir({ ekspedisi: d.expedisi });
     playForTone(d.tone);
+
+    // Daftar diperbarui di layar TANPA menarik ulang seluruh batch dari server.
+    // Dulu setiap scan memanggil /api/sesi lagi — empat query dan ratusan baris
+    // dikirim ulang hanya untuk menambah satu baris. Penyegaran penuh tetap
+    // jalan lewat timer 30 detik dan tombol "Muat ulang".
+    if (d.status === 'OK') {
+      setSt((lama) =>
+        lama
+          ? {
+              ...lama,
+              total: lama.total + 1,
+              totalHariIni: d.totalHariIni,
+              jenisEkspedisi: d.expedisi && !lama.jenisEkspedisi.includes(d.expedisi)
+                ? [...lama.jenisEkspedisi, d.expedisi]
+                : lama.jenisEkspedisi,
+              rows: [
+                {
+                  id: -Date.now(),
+                  resi: d.resi,
+                  status: 'AWAITING_PICKUP',
+                  jam: new Date().toISOString(),
+                  ekspedisi: d.expedisi,
+                  ekspedisiNama: d.expedisi,
+                },
+                ...lama.rows,
+              ],
+            }
+          : lama,
+      );
+    } else if (d.status === 'DOUBLE') {
+      setSt((lama) => (lama ? { ...lama, dupCount: lama.dupCount + 1, totalHariIni: d.totalHariIni } : lama));
+    }
+
     tampilkanFlash(
       d.tone,
       d.expedisi ?? 'BELUM DIKENALI',
-      d.status === 'OK' ? 'BERHASIL — MENUNGGU PICKUP' : d.status === 'DOUBLE' ? 'SUDAH PERNAH DISCAN' : d.message,
+      d.status === 'OK' ? 'BERHASIL — AWAITING TO SHIPMENT' : d.status === 'DOUBLE' ? 'SUDAH PERNAH DISCAN' : d.message,
       d.resi,
     );
-    void muat();
   };
 
   const cariResi = async () => {
@@ -204,10 +236,10 @@ export default function ScanDesktopPage() {
     const r = res.data.rows[0];
     const label =
       r.status === 'PICKUP'
-        ? `sudah dimanifest${r.basket ? ` di basket ${r.basket.code}` : ''}`
+        ? `sudah dimanifest — awaiting to pickup${r.basket ? ` di basket ${r.basket.code}` : ''}`
         : r.status === 'VOID'
           ? 'dibatalkan'
-          : 'sudah discan, menunggu pickup';
+          : 'sudah discan — awaiting to shipment, menunggu Scan 2';
     setHasilCari(`${r.resi} — ${label} (${fmtDate(r.scanDate)}).`);
     playForTone('success');
   };
@@ -334,7 +366,7 @@ export default function ScanDesktopPage() {
           </div>
 
           <div className="disp-tile" data-warna="hijau">
-            <div className="disp-tile-label">Menunggu pickup hari ini</div>
+            <div className="disp-tile-label">Awaiting to shipment hari ini</div>
             <div className="disp-tile-angka">{fmtNumber(st.totalHariIni)}</div>
             <div className="disp-bar">
               <span
@@ -418,7 +450,7 @@ export default function ScanDesktopPage() {
 
               <p className="disp-bantu">
                 Jasa kirim terdeteksi otomatis dari nomor resi. Tekan <strong>Enter</strong> setelah scan. Resi masuk
-                dengan status <strong>AWAITING TO PICKUP</strong> sampai diproses di Scan 2.
+                dengan status <strong>AWAITING TO SHIPMENT</strong> sampai diproses di Scan 2.
               </p>
             </div>
           </div>

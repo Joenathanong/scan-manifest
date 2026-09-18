@@ -114,8 +114,8 @@ export default function DashboardPage() {
       </div>
 
       <div className="kpi-grid">
-        <Kpi label="Awaiting to pickup" value={data?.kpi.awaiting ?? 0} color="var(--critical)" />
-        <Kpi label="Sudah pickup" value={data?.kpi.pickup ?? 0} color="var(--positive)" />
+        <Kpi label="Awaiting to shipment" value={data?.kpi.awaiting ?? 0} color="var(--critical)" />
+        <Kpi label="Awaiting to pickup" value={data?.kpi.pickup ?? 0} color="var(--positive)" />
         <Kpi label="Total discan" value={data?.kpi.total ?? 0} />
         <Kpi label="Basket aktif" value={data?.kpi.basketAktif ?? 0} />
         <Kpi
@@ -137,7 +137,7 @@ export default function DashboardPage() {
               <thead>
                 <tr>
                   <th>Tanggal</th>
-                  <th className="n">Awaiting</th>
+                  <th className="n">Shipment</th>
                   <th className="n">Pickup</th>
                   <th className="n p3">Batal</th>
                 </tr>
@@ -148,7 +148,7 @@ export default function DashboardPage() {
                     <td className="title" data-label="Tanggal">
                       {fmtDate(`${r.tanggal}T00:00:00.000Z`)}
                     </td>
-                    <td className="n" data-label="Awaiting">
+                    <td className="n" data-label="Shipment">
                       {fmtNumber(r.awaiting)}
                     </td>
                     <td className="n" data-label="Pickup">
@@ -180,7 +180,7 @@ export default function DashboardPage() {
               <thead>
                 <tr>
                   <th>Ekspedisi</th>
-                  <th className="n">Awaiting</th>
+                  <th className="n">Shipment</th>
                   <th className="n">Pickup</th>
                 </tr>
               </thead>
@@ -190,7 +190,7 @@ export default function DashboardPage() {
                     <td className="title" data-label="Ekspedisi">
                       {r.code}
                     </td>
-                    <td className="n" data-label="Awaiting">
+                    <td className="n" data-label="Shipment">
                       {fmtNumber(r.awaiting)}
                     </td>
                     <td className="n" data-label="Pickup">
@@ -213,7 +213,7 @@ export default function DashboardPage() {
 
       <div className="grid-card">
         <div className="grid-toolbar">
-          <strong style={{ fontSize: 13 }}>Resi menunggu pickup</strong>
+          <strong style={{ fontSize: 13 }}>Resi awaiting to shipment</strong>
           <span className="muted" style={{ fontSize: 12 }}>
             hilang dari daftar ini setelah discan di tahap 2
           </span>
@@ -251,7 +251,7 @@ export default function DashboardPage() {
                     </span>
                   </td>
                   <td data-label="Status">
-                    <span className="badge badge-critical">Awaiting to pickup</span>
+                    <span className="badge badge-critical">Awaiting to shipment</span>
                   </td>
                   <td className="p2" data-label="Operator">
                     {r.scan1By.name}
@@ -264,7 +264,7 @@ export default function DashboardPage() {
               {!data?.rows.length && (
                 <tr>
                   <td colSpan={5} className="muted" data-label="Info">
-                    Tidak ada resi yang menunggu pickup pada rentang ini.
+                    Tidak ada resi berstatus awaiting to shipment pada rentang ini.
                   </td>
                 </tr>
               )}

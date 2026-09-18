@@ -340,22 +340,29 @@ export async function docTotals(docId: number) {
 /** SCAN 2 — resi diikat ke basket, status jadi PICKUP, lalu dikirim ke OCS. */
 export async function scanSecond(user: SessionUser, docId: number, rawResi: string): Promise<Scan2Result> {
   const resi = cleanResi(rawResi);
-  const doc = await prisma.manifestDoc.findUnique({
-    where: { id: docId },
-    include: { basket: { include: { expedisi: true } } },
-  });
+
+  // Dokumen dan pasangan order ID <-> resi sama-sama hanya butuh docId, jadi
+  // ditembak berbarengan (lihat catatan kecepatan di scan-service).
+  const [doc, candidate] = await Promise.all([
+    prisma.manifestDoc.findUnique({
+      where: { id: docId },
+      include: { basket: { include: { expedisi: true } } },
+    }),
+    // Sengaja TIDAK disaring used:false supaya kandidat yang sudah terpakai
+    // tetap terbaca — justru itu penanda dobel.
+    prisma.manifestCandidate.findFirst({
+      where: { docId, OR: [{ trackingNumber: resi }, { orderId: resi }] },
+    }),
+  ]);
   if (!doc) throw new ApiError('Dokumen manifest tidak ditemukan.', 404);
   if (doc.status === 'SUBMITTED' || doc.status === 'CANCELLED') {
     throw new ApiError('Dokumen ini sudah ditutup. Buka sesi baru.', 409);
   }
 
   const now = new Date();
-  const fail = async (
-    status: Scan2Result['status'],
-    message: string,
-    reason: string,
-  ): Promise<Scan2Result> => {
-    await prisma.manifestScan.create({
+
+  const catatTolak = (reason: string) =>
+    prisma.manifestScan.create({
       data: {
         docId,
         scanResult: resi,
@@ -366,62 +373,125 @@ export async function scanSecond(user: SessionUser, docId: number, rawResi: stri
         scannedById: user.id,
       },
     });
+
+  const fail = async (
+    status: Scan2Result['status'],
+    message: string,
+    reason: string,
+  ): Promise<Scan2Result> => {
+    await catatTolak(reason);
     return { status, tone: 'failed', message, resi, reason, ...(await docTotals(docId)) };
+  };
+
+  const dobel = async (message: string, reason = 'Double'): Promise<Scan2Result> => {
+    await catatTolak(reason);
+    return { status: 'DOUBLE', tone: 'double', message, resi, reason, ...(await docTotals(docId)) };
   };
 
   if (resi.length < 6) {
     return { status: 'REJECT', tone: 'failed', message: 'Resi terlalu pendek — scan ulang.', resi, ...(await docTotals(docId)) };
   }
 
-  const already = await prisma.manifestScan.findFirst({ where: { docId, scanResult: resi, valid: true } });
+  /* ------------------------------------------------------------------
+   * Satu paket punya DUA barcode: nomor resi dan order ID. Keduanya boleh
+   * discan, tapi hanya salah satu yang boleh dihitung. Jadi sebelum apa pun,
+   * yang discan diterjemahkan dulu menjadi SEMUA identitas paket itu, lalu
+   * pemeriksaan ganda dilakukan terhadap seluruh identitas tersebut — bukan
+   * hanya terhadap teks yang barusan ditembak.
+   * ------------------------------------------------------------------ */
+
+  const identitas = [...new Set([resi, candidate?.orderId ?? '', candidate?.trackingNumber ?? ''].filter(Boolean))];
+
+  const cocokIdentitas = [
+    { scanResult: { in: identitas } },
+    { orderId: { in: identitas } },
+    { trackingNumber: { in: identitas } },
+  ];
+  const cocokItem = [
+    { resiUnik: { in: identitas } },
+    { ocsOrderId: { in: identitas } },
+    { ocsTracking: { in: identitas } },
+  ];
+
+  // Tiga pemeriksaan ini saling bebas, jadi dijalankan berbarengan.
+  const [already, terpakai, item] = await Promise.all([
+    // Sudah pernah discan di basket ini? Dicek lewat ketiga kolom sekaligus,
+    // jadi resi yang menyusul order ID (atau sebaliknya) tetap tertangkap.
+    prisma.manifestScan.findFirst({
+      where: { docId, valid: true, OR: cocokIdentitas },
+      select: { scanResult: true, orderId: true, trackingNumber: true },
+    }),
+    // Paket yang sama sudah dimanifest di basket LAIN.
+    prisma.scanItem.findFirst({
+      where: { status: 'PICKUP', OR: cocokItem },
+      select: { resi: true, basket: { select: { code: true } } },
+    }),
+    // Baris scan tahap 1 — dicocokkan dengan semua identitas supaya paket yang
+    // di tahap 1 discan pakai resi tetap ketemu walau di sini order ID-nya
+    // yang ditembak.
+    prisma.scanItem.findFirst({
+      where: { status: { not: 'VOID' }, OR: cocokItem },
+      orderBy: { id: 'asc' },
+    }),
+  ]);
+
   if (already) {
-    await prisma.manifestScan.create({
-      data: {
-        docId,
-        scanResult: resi,
-        manifestTime: now,
-        shippingProvider: doc.shipper,
-        valid: false,
-        reason: 'Double',
-        scannedById: user.id,
-      },
-    });
-    return {
-      status: 'DOUBLE',
-      tone: 'double',
-      message: `${resi} sudah discan di basket ini.`,
-      resi,
-      reason: 'Double',
-      ...(await docTotals(docId)),
-    };
+    const lewat =
+      already.scanResult === resi
+        ? 'barcode yang sama'
+        : already.scanResult === candidate?.orderId || already.orderId === resi
+          ? `order ID ${already.orderId ?? already.scanResult}`
+          : `resi ${already.trackingNumber ?? already.scanResult}`;
+    return dobel(`${resi} sudah discan di basket ini lewat ${lewat}.`);
   }
 
-  const item = await prisma.scanItem.findUnique({ where: { resiUnik: resi } });
+  if (terpakai) {
+    return dobel(
+      `${resi} sudah dimanifest${terpakai.basket ? ` di basket ${terpakai.basket.code}` : ''}.`,
+      'Sudah dimanifest',
+    );
+  }
+
   if (!item) {
     return fail('NOT_IN_SCAN1', `${resi} belum ada di scan tahap 1.`, 'Belum discan tahap 1');
   }
-  if (item.status === 'PICKUP') {
-    return fail('DOUBLE', `${resi} sudah dimanifest di basket lain.`, 'Sudah dimanifest');
-  }
 
   // Cocokkan dengan daftar order OCS yang belum dimanifest.
-  let orderId = '';
-  let tracking = resi;
-  const candidate = await prisma.manifestCandidate.findFirst({
-    where: { docId, used: false, OR: [{ trackingNumber: resi }, { orderId: resi }] },
-  });
+  let orderId = candidate?.orderId ?? '';
+  let tracking = candidate?.trackingNumber || resi;
 
   if (candidate) {
-    orderId = candidate.orderId;
-    tracking = candidate.trackingNumber || resi;
-    await prisma.manifestCandidate.update({ where: { id: candidate.id }, data: { used: true } });
+    if (!candidate.used) {
+      await prisma.manifestCandidate.update({ where: { id: candidate.id }, data: { used: true } });
+    }
   } else if (ocs.ocsEnabled()) {
     try {
       const check = await ocs.checkInvalidManifest(resi, doc.shipper, await kredensialUntukUser(user.id));
       if (!check.ok) return fail('INVALID', `${resi} ditolak OCS: ${check.reason}`, check.reason);
       orderId = check.orderId;
       tracking = check.trackingNumber || resi;
-    } catch (e) {
+
+      // OCS baru saja memberi pasangan order ID <-> resi. Periksa ulang dobel
+      // dengan identitas yang sekarang sudah lengkap.
+      const lengkap = [...new Set([resi, orderId, tracking].filter(Boolean))];
+      if (lengkap.length > identitas.length) {
+        const susulan = await prisma.manifestScan.findFirst({
+          where: {
+            docId,
+            valid: true,
+            OR: [
+              { scanResult: { in: lengkap } },
+              { orderId: { in: lengkap } },
+              { trackingNumber: { in: lengkap } },
+            ],
+          },
+          select: { scanResult: true },
+        });
+        if (susulan) {
+          return dobel(`${resi} sudah discan di basket ini lewat ${susulan.scanResult}.`);
+        }
+      }
+    } catch {
       // OCS tidak bisa dihubungi: scan TETAP diterima, sinkronisasi menyusul.
       orderId = '';
     }
@@ -440,6 +510,7 @@ export async function scanSecond(user: SessionUser, docId: number, rawResi: stri
       scannedById: user.id,
     },
   });
+  void scan;
 
   await withRetry(() =>
     prisma.scanItem.update({

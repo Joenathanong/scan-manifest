@@ -121,7 +121,7 @@ export default function Scan1Page() {
       data.tone,
       data.expedisi ?? 'BELUM DIKENALI',
       data.status === 'OK'
-        ? 'BERHASIL — MENUNGGU PICKUP'
+        ? 'BERHASIL — AWAITING TO SHIPMENT'
         : data.status === 'DOUBLE'
           ? 'SUDAH PERNAH DISCAN'
           : data.message,
@@ -171,7 +171,7 @@ export default function Scan1Page() {
 
       <div className="kpi-grid">
         <div className="card">
-          <div className="kpi-label">Menunggu pickup hari ini</div>
+          <div className="kpi-label">Awaiting to shipment hari ini</div>
           <div className="kpi-value">{fmtNumber(totalHariIni)}</div>
         </div>
         <div className="card">

@@ -189,6 +189,10 @@ model ScanItem {
   @@index([scanDate])
   @@index([scanDate, status])
   @@index([ocsState])
+  // Dipakai Scan 2 untuk mengenali paket lewat order ID / resi OCS, bukan
+  // hanya lewat nomor yang discan di tahap 1.
+  @@index([ocsOrderId])
+  @@index([ocsTracking])
 }
 
 // Sesi scan pertama: dibuat otomatis per operator per hari.
@@ -274,6 +278,9 @@ model ManifestScan {
   @@index([itemId])
   @@index([valid])
   @@index([syncedAt])
+  // Pemeriksaan dobel lintas identitas (resi vs order ID).
+  @@index([orderId])
+  @@index([trackingNumber])
 }
 
 // Salinan daftar "order belum dimanifest" dari OCS saat dokumen dibuka.

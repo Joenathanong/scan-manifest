@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/db';
-import { ApiError, handle, optStr, requireAdmin, writeAudit } from '@/lib/api';
+import { ApiError, handle, optStr, requireAdmin, writeAudit, lupakanUser } from '@/lib/api';
 import type { Role } from '@prisma/client';
 
 export const runtime = 'nodejs';
@@ -26,6 +26,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
       if (adminAktif <= 1) throw new ApiError('Ini admin aktif terakhir — tidak boleh dinonaktifkan.');
     }
 
+    lupakanUser(Number(id));
     const updated = await prisma.user.update({
       where: { id: userId },
       data: {

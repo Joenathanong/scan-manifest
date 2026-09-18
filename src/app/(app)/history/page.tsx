@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { apiGet } from '@/lib/client';
 import { fmtDate, fmtDateTime, fmtNumber, todayISO } from '@/lib/date';
 import ExportButton from '@/components/ExportButton';
+import { LABEL_STATUS } from '@/lib/status';
 
 type Row = {
   id: number;
@@ -28,11 +29,7 @@ const badgeStatus: Record<string, string> = {
   VOID: 'badge-neutral',
 };
 
-const labelStatus: Record<string, string> = {
-  AWAITING_PICKUP: 'Awaiting to pickup',
-  PICKUP: 'Pickup',
-  VOID: 'Dibatalkan',
-};
+const labelStatus = LABEL_STATUS;
 
 export default function HistoryPage() {
   const today = todayISO();
@@ -100,8 +97,8 @@ export default function HistoryPage() {
           </label>
           <select id="s" className="select-field" value={status} onChange={(e) => setStatus(e.target.value)}>
             <option value="">Semua</option>
-            <option value="AWAITING_PICKUP">Awaiting to pickup</option>
-            <option value="PICKUP">Pickup</option>
+            <option value="AWAITING_PICKUP">Awaiting to shipment</option>
+            <option value="PICKUP">Awaiting to pickup</option>
             <option value="VOID">Dibatalkan</option>
           </select>
         </div>

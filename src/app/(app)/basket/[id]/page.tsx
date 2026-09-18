@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { use, useCallback, useEffect, useState } from 'react';
 import { apiGet, apiPost } from '@/lib/client';
 import { toast } from '@/components/Toast';
+import { labelStatus } from '@/lib/status';
 import { fmtDateTime, fmtNumber, fmtTime } from '@/lib/date';
 
 type Detail = {
@@ -150,7 +151,7 @@ export default function BasketDetailPage({ params }: { params: Promise<{ id: str
                   </td>
                   <td data-label="Status">
                     <span className={`badge ${i.status === 'PICKUP' ? 'badge-positive' : 'badge-critical'}`}>
-                      {i.status === 'PICKUP' ? 'Pickup' : i.status}
+                      {labelStatus(i.status)}
                     </span>
                   </td>
                   <td data-label="OCS">

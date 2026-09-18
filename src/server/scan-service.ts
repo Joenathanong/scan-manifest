@@ -2,6 +2,7 @@ import { prisma, isUniqueViolation, nextSeq, withRetry } from '@/lib/db';
 import { ApiError, writeAudit, type SessionUser } from '@/lib/api';
 import { cleanResi, detectExpedisi, parsePrefixes } from '@/lib/resi';
 import { compactDate, dateOnly, todayISO } from '@/lib/date';
+import { lupakan, memo } from '@/lib/cache';
 
 export type ScanTone = 'success' | 'double' | 'failed';
 
@@ -15,7 +16,22 @@ export type Scan1Result = {
   totalHariIni: number;
 };
 
-/** Sesi scan pertama: satu per operator per hari, dibuat diam-diam. */
+/** Buang cache sesi milik operator — dipanggil saat batch dibuka/ditutup. */
+export function lupakanSesi(userId: number) {
+  lupakan(`sesi:${userId}:`, true);
+}
+
+/**
+ * Sesi scan pertama: satu per operator per hari, dibuat diam-diam.
+ *
+ * Id-nya ditahan 60 detik. Sesi hanya berubah saat batch dibuka atau ditutup,
+ * dan keduanya sudah memanggil lupakanSesi(), jadi tidak ada gunanya menanyakan
+ * ulang ke TiDB pada setiap scan.
+ */
+export function idSesiCepat(userId: number, iso = todayISO()): Promise<number> {
+  return memo(`sesi:${userId}:${iso}`, 60, async () => (await getOrCreateSession(userId, iso)).id);
+}
+
 export async function getOrCreateSession(userId: number, iso = todayISO()) {
   const date = dateOnly(iso);
   const existing = await prisma.scanSession.findFirst({
@@ -40,7 +56,18 @@ export async function getOrCreateSession(userId: number, iso = todayISO()) {
   }
 }
 
-async function expedisiRules() {
+/** Buang cache aturan prefix — dipanggil setelah ekspedisi diubah admin. */
+export function lupakanAturanEkspedisi() {
+  lupakan('expedisi:rules');
+}
+
+function expedisiRules() {
+  // Master ekspedisi nyaris tidak pernah berubah saat operasional berjalan,
+  // tapi tanpa cache ia dibaca ulang pada setiap scan.
+  return memo('expedisi:rules', 300, bacaExpedisiRules);
+}
+
+async function bacaExpedisiRules() {
   const list = await prisma.expedisi.findMany({
     where: { active: true },
     select: { id: true, code: true, prefixes: true },
@@ -72,20 +99,33 @@ export async function scanFirst(user: SessionUser, rawResi: string): Promise<Sca
     };
   }
 
-  const { rules, byCode } = await expedisiRules();
+  // Empat hal ini tidak saling bergantung, jadi ditembak BERBARENGAN. Ini
+  // bagian terpenting dari kecepatan scan: berurutan berarti membayar empat
+  // perjalanan jaringan ke TiDB, berbarengan hanya membayar yang paling lambat.
+  // Tiga di antaranya biasanya sudah ada di cache, jadi praktis yang tersisa
+  // cuma pencarian resi.
+  const [aturan, existing, sessionId, totalSebelum] = await Promise.all([
+    expedisiRules(),
+    prisma.scanItem.findUnique({
+      where: { resiUnik: resi },
+      include: {
+        scan1By: { select: { name: true } },
+        basket: { select: { code: true } },
+        expedisi: { select: { code: true } },
+      },
+    }),
+    idSesiCepat(user.id, iso),
+    countAwaitingToday(iso),
+  ]);
+
+  const { rules, byCode } = aturan;
   const code = detectExpedisi(resi, rules);
 
-  const existing = await prisma.scanItem.findUnique({
-    where: { resiUnik: resi },
-    include: {
-      scan1By: { select: { name: true } },
-      basket: { select: { code: true } },
-      expedisi: { select: { code: true } },
-    },
-  });
   if (existing) {
     const when = existing.status === 'PICKUP' ? 'sudah dimanifest' : 'sudah discan';
-    await catatDuplikat(user.id);
+    // Tidak ditunggu: penghitung duplikat hanya untuk laporan, tidak boleh
+    // menahan balasan ke operator yang sedang memegang scanner.
+    void catatDuplikat(user.id).catch(() => {});
     return {
       status: 'DOUBLE',
       tone: 'double',
@@ -96,12 +136,11 @@ export async function scanFirst(user: SessionUser, rawResi: string): Promise<Sca
       // tidak menampilkan "BELUM DIKENALI" padahal ekspedisinya jelas.
       expedisi: (existing as { expedisi: { code: string } | null }).expedisi?.code ?? code,
       itemId: existing.id,
-      totalHariIni: await countAwaitingToday(iso),
+      totalHariIni: totalSebelum,
     };
   }
 
   const expedisiId = code ? byCode.get(code) ?? null : null;
-  const session = await getOrCreateSession(user.id, iso);
 
   try {
     const item = await prisma.scanItem.create({
@@ -109,7 +148,7 @@ export async function scanFirst(user: SessionUser, rawResi: string): Promise<Sca
         resi,
         resiUnik: resi,
         expedisiId,
-        sessionId: session.id,
+        sessionId,
         scanDate: dateOnly(iso),
         status: 'AWAITING_PICKUP',
         scan1ById: user.id,
@@ -122,18 +161,20 @@ export async function scanFirst(user: SessionUser, rawResi: string): Promise<Sca
       resi,
       expedisi: code,
       itemId: item.id,
-      totalHariIni: await countAwaitingToday(iso),
+      // Dihitung dari angka sebelum simpan + 1, bukan COUNT ulang. Menghemat
+      // satu perjalanan lagi, dan angkanya persis sama.
+      totalHariIni: totalSebelum + 1,
     };
   } catch (e) {
     if (isUniqueViolation(e)) {
-      await catatDuplikat(user.id);
+      void catatDuplikat(user.id).catch(() => {});
       return {
         status: 'DOUBLE',
         tone: 'double',
         message: `${resi} baru saja discan di perangkat lain.`,
         resi,
         expedisi: code,
-        totalHariIni: await countAwaitingToday(iso),
+        totalHariIni: totalSebelum,
       };
     }
     throw e;
@@ -148,6 +189,7 @@ export async function bukaSesi(
   const iso = todayISO();
   const date = dateOnly(iso);
 
+  lupakanSesi(user.id);
   await prisma.scanSession.updateMany({
     where: { userId: user.id, closedAt: null },
     data: { closedAt: new Date() },
@@ -155,7 +197,7 @@ export async function bukaSesi(
 
   const seq = await nextSeq(`session:${iso}`);
   const code = `S-${compactDate(iso)}-${String(seq).padStart(3, '0')}`;
-  return prisma.scanSession.create({
+  const baru = await prisma.scanSession.create({
     data: {
       code,
       date,
@@ -165,9 +207,12 @@ export async function bukaSesi(
       shift: params.shift?.slice(0, 32) || null,
     },
   });
+  lupakanSesi(user.id);
+  return baru;
 }
 
 export async function tutupSesi(user: SessionUser) {
+  lupakanSesi(user.id);
   const { count } = await prisma.scanSession.updateMany({
     where: { userId: user.id, closedAt: null },
     data: { closedAt: new Date() },

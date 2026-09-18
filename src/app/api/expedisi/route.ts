@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/db';
+import { lupakanAturanEkspedisi } from '@/server/scan-service';
 import { ApiError, handle, requireSupervisor, requireUser, optStr, str } from '@/lib/api';
 import { isUniqueViolation } from '@/lib/db';
 
@@ -17,6 +18,7 @@ export async function POST(req: Request) {
     await requireSupervisor();
     const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
     try {
+      lupakanAturanEkspedisi();
       return await prisma.expedisi.create({
         data: {
           code: str(body.code, 'Kode', 32).toUpperCase(),

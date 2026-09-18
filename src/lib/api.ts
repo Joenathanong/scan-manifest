@@ -2,6 +2,7 @@ import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 import { prisma } from './db';
 import { readSession, signSession } from './crypto';
+import { lupakan, memo } from './cache';
 import type { Role } from '@prisma/client';
 
 export const COOKIE = 'scan_manifest_session';
@@ -41,13 +42,31 @@ export async function clearSessionCookie() {
   jar.set(COOKIE, '', { httpOnly: true, path: '/', maxAge: 0 });
 }
 
-/** null kalau belum login / user dinonaktifkan. Dicek setiap request. */
+/**
+ * null kalau belum login / user dinonaktifkan.
+ *
+ * Hasilnya ditahan 20 detik per pengguna. Tanpa ini setiap permintaan —
+ * termasuk setiap scan — membayar satu perjalanan ke TiDB hanya untuk
+ * mengulang pencarian baris pengguna yang sama. Cookie-nya sendiri sudah
+ * bertanda tangan HMAC, jadi keasliannya tetap diperiksa setiap kali; yang
+ * ditunda hanyalah pembacaan status aktif/role, dan itu dibatalkan seketika
+ * saat pengguna diubah lewat menu admin.
+ */
 export async function currentUser(): Promise<SessionUser | null> {
   const jar = await cookies();
   const payload = readSession(jar.get(COOKIE)?.value);
   if (!payload) return null;
+  return memo(`user:${payload.uid}`, 20, () => bacaUser(payload.uid));
+}
+
+/** Buang cache pengguna — dipanggil setelah data pengguna diubah. */
+export function lupakanUser(userId: number) {
+  lupakan(`user:${userId}`);
+}
+
+async function bacaUser(uid: number): Promise<SessionUser | null> {
   const user = await prisma.user.findUnique({
-    where: { id: payload.uid },
+    where: { id: uid },
     select: {
       id: true,
       username: true,

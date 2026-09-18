@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/db';
+import { lupakanAturanEkspedisi } from '@/server/scan-service';
 import { handle, optStr, requireSupervisor, writeAudit } from '@/lib/api';
 
 export const runtime = 'nodejs';
@@ -11,6 +12,7 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
 
     // code TIDAK bisa diubah — kode dipakai di dalam nomor basket yang sudah tercetak.
+    lupakanAturanEkspedisi();
     const updated = await prisma.expedisi.update({
       where: { id: Number(id) },
       data: {

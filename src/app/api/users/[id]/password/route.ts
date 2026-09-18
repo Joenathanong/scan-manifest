@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/db';
 import { hashPassword, tempPassword } from '@/lib/crypto';
-import { ApiError, handle, requireAdmin, writeAudit } from '@/lib/api';
+import { ApiError, handle, requireAdmin, writeAudit, lupakanUser } from '@/lib/api';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -14,6 +14,7 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
     if (!user) throw new ApiError('Pengguna tidak ditemukan.', 404);
 
     const password = tempPassword();
+    lupakanUser(Number(id));
     await prisma.user.update({
       where: { id: user.id },
       data: { passwordHash: hashPassword(password), mustChangePassword: true },
