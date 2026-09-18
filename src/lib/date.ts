@@ -15,6 +15,14 @@ export function dateOnly(iso: string): Date {
   return new Date(`${iso}T00:00:00.000Z`);
 }
 
+/**
+ * Awal hari WIB sebagai instant UTC — untuk filter tanggal ke OCS, yang
+ * memakai UTC. Tengah malam WIB = 17:00 UTC hari sebelumnya.
+ */
+export function awalHariUtc(iso: string): Date {
+  return new Date(`${iso}T00:00:00+07:00`);
+}
+
 export function isoFromDate(d: Date): string {
   return d.toISOString().slice(0, 10);
 }

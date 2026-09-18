@@ -1,7 +1,9 @@
+import { after } from 'next/server';
 import { prisma } from '@/lib/db';
 import { handle, requireUser } from '@/lib/api';
 import { ocsEnabled } from '@/server/ocs-client';
 import { flushOutbox } from '@/server/manifest-service';
+import { verifikasiTertunda } from '@/server/verify-service';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -37,6 +39,11 @@ export async function GET() {
       where: { status: 'PENDING', nextAttemptAt: { lte: new Date() } },
     });
     const autoFlushResult = await autoFlush(siapKirim);
+
+    // Saat operator berhenti menembak, tidak ada lagi permintaan scan yang
+    // memicu pemeriksaan. Lonceng status dipanggil tiap 30 detik selama ada
+    // halaman terbuka, jadi sisa antrean ikut dibereskan dari sini.
+    after(() => verifikasiTertunda());
 
     const [outboxPending, outboxFailed, docsBermasalah, scanBelumSinkron, itemPending] = await Promise.all([
       prisma.ocsOutbox.count({ where: { status: { in: ['PENDING', 'RUNNING'] } } }),

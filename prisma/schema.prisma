@@ -31,6 +31,26 @@ enum ItemStatus {
   VOID
 }
 
+/**
+ * Hasil pemeriksaan resi ke OCS setelah Scan 1.
+ *
+ * Pemeriksaan ini SELALU dijalankan sesudah balasan scan dikirim ke operator,
+ * tidak pernah di tengah scan — kecepatan scan tidak boleh bergantung pada OCS.
+ *
+ *   NONE    ekspedisinya sudah dikenali dari pola resi, tidak perlu diperiksa
+ *   PENDING menunggu giliran diperiksa
+ *   VALID   OCS mengenali resi ini
+ *   INVALID OCS bilang resinya tidak ada -> TIDAK dihitung sebagai awaiting
+ *   SKIP    OCS tidak bisa dihubungi atau pemeriksaan dimatikan -> tetap dihitung
+ */
+enum VerifyState {
+  NONE
+  PENDING
+  VALID
+  INVALID
+  SKIP
+}
+
 enum OcsState {
   NONE
   PENDING
@@ -167,6 +187,12 @@ model ScanItem {
   // total, tapi datanya tetap utuh.
   submitId   Int?
 
+  // Pemeriksaan ke OCS sesudah Scan 1 (lihat enum VerifyState).
+  verifyState  VerifyState @default(NONE)
+  verifyReason String?     @db.VarChar(191)
+  verifiedAt   DateTime?
+  verifyTries  Int         @default(0)
+
   voidedAt   DateTime?
   voidedById Int?
   voidReason String?   @db.VarChar(191)
@@ -201,6 +227,9 @@ model ScanItem {
   @@index([submitId])
   // Panel total per ekspedisi: hitung per sesi yang belum disubmit.
   @@index([sessionId, submitId])
+  // Antrean pemeriksaan ke OCS dan penyaringan hitungan awaiting.
+  @@index([verifyState])
+  @@index([scanDate, verifyState])
 }
 
 // Sesi scan pertama: dibuat otomatis per operator per hari.

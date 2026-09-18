@@ -23,7 +23,7 @@ export async function GET(req: Request) {
 
     const [awaiting, pickup, voided, byStatusDate, byExpedisi, rows, total, baskets, outbox] =
       await Promise.all([
-        prisma.scanItem.count({ where: { ...range, status: 'AWAITING_PICKUP' } }),
+        prisma.scanItem.count({ where: { ...range, status: 'AWAITING_PICKUP', verifyState: { not: 'INVALID' } } }),
         prisma.scanItem.count({ where: { ...range, status: 'PICKUP' } }),
         prisma.scanItem.count({ where: { ...range, status: 'VOID' } }),
         prisma.scanItem.groupBy({
@@ -37,7 +37,7 @@ export async function GET(req: Request) {
           _count: { _all: true },
         }),
         prisma.scanItem.findMany({
-          where: { ...range, status: 'AWAITING_PICKUP' },
+          where: { ...range, status: 'AWAITING_PICKUP', verifyState: { not: 'INVALID' } },
           orderBy: { id: 'desc' },
           take,
           skip,
@@ -51,7 +51,7 @@ export async function GET(req: Request) {
             session: { select: { code: true } },
           },
         }),
-        prisma.scanItem.count({ where: { ...range, status: 'AWAITING_PICKUP' } }),
+        prisma.scanItem.count({ where: { ...range, status: 'AWAITING_PICKUP', verifyState: { not: 'INVALID' } } }),
         prisma.basket.findMany({
           where: { date: { gte: dateOnly(dari), lte: dateOnly(sampai) } },
           orderBy: { id: 'desc' },

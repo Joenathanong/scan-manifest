@@ -115,3 +115,123 @@ npm run ocs:orders -- SiCepat
 Skrip itu menghitung dokumen menggantung sebelum dan sesudah pemanggilan, lalu
 menyimpulkan aman atau tidak. Baru setelah hasilnya AMAN, penarikan berkala
 layak dibuat.
+
+## 8. Pemeriksaan resi Scan 1 ke OCS
+
+Resi yang polanya tidak dikenali dulu tetap masuk hitungan *awaiting to
+shipment*, termasuk salah tembak barcode. Sekarang baris seperti itu ditandai
+`verifyState = PENDING` dan diperiksa ke OCS **sesudah** balasan scan dikirim —
+lewat `after()` Next.js, jadi kecepatan scan tidak terpengaruh sama sekali.
+
+`CheckInvalidManifest` butuh nama kurir, padahal kurir resi inilah yang tidak
+diketahui. Jadi kurir dicoba satu per satu, dan yang dibaca adalah BEDA alasan
+penolakannya:
+
+| Jawaban OCS | Artinya | Putusan |
+|---|---|---|
+| `OK#<OrderId>#<Tracking>` | Resi ada, kurirnya ketemu | `VALID`, ekspedisi ikut terisi |
+| Alasan selain "not found" (`Wrong Shipper`, `Cancelled`, `Shipped`, …) | Resi ADA, cuma tidak bisa dimanifest | `VALID`, alasannya dicatat |
+| SEMUA kurir bilang "not found" | Resi memang tidak ada | `INVALID` — tidak ikut dihitung |
+| Error jaringan / OCS mati | Belum ketahuan | `SKIP`, dicoba lagi (maks 3×) |
+
+Putusan `INVALID` sengaja dibuat paling sulit dicapai: satu jawaban selain "not
+found", atau satu error jaringan saja, sudah membatalkan vonis. Lebih baik
+menghitung resi palsu daripada membuang resi asli.
+
+Setelan lewat env:
+
+| Env | Bawaan | Guna |
+|---|---|---|
+| `OCS_VERIFY_SCAN1` | `true` | `false` mematikan pemeriksaan |
+| `OCS_VERIFY_BATCH` | `3` | Resi per putaran |
+| `OCS_VERIFY_MAKS_KURIR` | `12` | Kurir yang dicoba per resi |
+| `OCS_VERIFY_BUDGET_MS` | `8000` | Jatah waktu sekali putaran |
+
+Antreannya dikerjakan dari tiga tempat: `after()` tiap scan, `after()` pada
+lonceng status (tiap 30 detik selama ada halaman terbuka), dan cron harian
+untuk sisa terakhir.
+
+## 9. OData /odata/DTO_Orders — dashboard TV
+
+Dibongkar dari lalu lintas halaman `ocs.iegsystem.id/orders-v1` pada
+**18 September 2026**. Halaman itu memanggil:
+
+```
+GET /odata/DTO_Orders
+  ?$orderby=CreatedAt desc
+  &$top=25
+  &$filter=(StatusCode eq 30000) and (CreatedAt ge 2026-09-16T17:00:00Z)
+  &$count=true
+```
+
+Jadi `$filter`, `$top`, `$count`, `$orderby`, dan `$select` semuanya didukung.
+Dengan `$top=0&$count=true` kita dapat jumlahnya saja tanpa menarik satu baris
+pun — itu yang dipakai dashboard TV.
+
+### Kode status (`/MasterData/GetStatusList`, 18 Sep 2026)
+
+| Kode | Nama | Dipakai untuk |
+|---|---|---|
+| 20013 | `PICKED` | kartu **Order Picked** |
+| 20022 | `PACKED` | — |
+| 20030 | `MANIFESTED` | — |
+| 30000 | `IN_TRANSIT` | kartu **In Transit** |
+
+Daftar lengkapnya: `NA(0)`, `UNPAID(10000)`, `IN_CANCEL(11000)`,
+`CANCELLED(11100)`, `READY_TO_PROCESS(20000)`, `PROCESSED(20001)`,
+`SCHEDULED(20002)`, `PICKLIST_ASSIGNED(20010)`, `PICKING(20011)`,
+`PICKING_FAILED(20012)`, `PICKED(20013)`, `SORTING(20014)`,
+`SORTING_FAILED(20015)`, `SORTED(20016)`, `PACKING(20020)`,
+`PACKING_FAILED(20021)`, `PACKED(20022)`, `BYPASS(20023)`,
+`MANIFESTED(20030)`, `IN_TRANSIT(30000)`, `SHIPPING_LOST(30200)`,
+`SHIPPING_DAMAGED(30200)`, `SHIPPING_FAILED(30300)`, `RETRY_SHIP(31000)`,
+`DELIVERED_TOCONFIRM(40000)`, `DELIVERED_CONFIRMED(41000)`,
+`DELIVERED_RETURNED(42000)`, `COMPLETED(50000)`, `RETURN(70000)`,
+`RETURN_RETURNED(71000)`, `RETURN_CONFIRMED(72000)`, `CANCELLED(90000)`.
+
+### Yang BELUM terverifikasi
+
+Nama kolom nomor resi di `DTO_Orders` ditebak `TrackingNumber` (mengikuti API
+manifest) — belum dilihat langsung karena sesi browser terputus sebelum sempat.
+Jalankan dari PC:
+
+```
+npm run ocs:odata
+```
+
+Skrip itu menampilkan daftar kolom asli, menandai kandidat kolom resi, dan
+menguji pencarian gabungan `TrackingNumber eq 'A' or TrackingNumber eq 'B'`
+yang dipakai kartu In Transit. Kalau nama kolomnya ternyata berbeda, cukup isi
+`OCS_ODATA_FIELD_RESI=<nama kolom>` di `.env` — kodenya tidak perlu diubah.
+
+### Cara dashboard TV memakainya
+
+| Kartu | Sumber |
+|---|---|
+| Order Picked | OCS: `StatusCode eq 20013 and CreatedAt ge <tengah malam WIB>` |
+| Awaiting to Shipment | TiDB: `ScanItem` `AWAITING_PICKUP`, bukan `INVALID` |
+| Awaiting to Pickup | TiDB: `ScanItem` `PICKUP` |
+| In Transit | OCS: `StatusCode eq 30000` DIBATASI pada resi yang ada di Awaiting to Pickup kita |
+
+In Transit sengaja dibatasi pada resi kita sendiri: begitu status paket berubah
+dari `IN_TRANSIT`, resi itu tidak lagi terhitung dan angkanya turun sendiri.
+
+Hasilnya disimpan sebagai **satu** snapshot di tabel `Setting` (kunci
+`tv:snapshot`) dan setiap penarikan **menimpanya utuh** — tidak menumpuk, tidak
+ada angka lama yang ikut dijumlahkan. Itu memang yang dibutuhkan: status paket
+di OCS berubah-ubah, jadi satu-satunya jawaban yang benar adalah hasil hitung
+terakhir.
+
+Snapshot dibangun ulang lewat `after()` kalau umurnya sudah melewati jeda yang
+disetel. Jedanya disimpan di `Setting` kunci `tv:interval-menit` dan diubah
+dari **Admin → Setelan → Dashboard TV** (1–120 menit, bawaan 5), jadi tidak
+perlu deploy ulang. Layar TV tidak pernah menunggu OCS — ia hanya membaca
+snapshot.
+
+| Env | Bawaan | Guna |
+|---|---|---|
+| `TV_REFRESH_MENIT` | `5` | Jeda awal sebelum disetel dari menu Setelan |
+| `TV_ODATA_CHUNK` | `50` | Resi per permintaan OData |
+| `TV_ODATA_MAKS` | `40` | Batas permintaan per penyegaran |
+| `TV_TOKEN` | kosong | Kalau diisi, TV dibuka dengan `/tv?key=<token>` |
+| `OCS_ODATA_FIELD_RESI` | `TrackingNumber` | Nama kolom resi di DTO_Orders |

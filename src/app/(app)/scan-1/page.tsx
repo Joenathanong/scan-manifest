@@ -25,7 +25,12 @@ type Scan1Result = {
 
 type BarisEkspedisi = { expedisiId: number | null; code: string; name: string; jumlah: number };
 type BatchSubmit = { id: number; code: string; expedisiCode: string; jumlah: number; jam: string; oleh: string };
-type StatusSesi = { ringkasan: BarisEkspedisi[]; submits: BatchSubmit[]; belumSubmit: number };
+type StatusSesi = {
+  ringkasan: BarisEkspedisi[];
+  submits: BatchSubmit[];
+  belumSubmit: number;
+  verifikasi: { menunggu: number; tidakAda: number };
+};
 
 type Row = {
   id: number;
@@ -207,6 +212,20 @@ export default function Scan1Page() {
         <div className="card">
           <div className="kpi-label">Scan saya hari ini</div>
           <div className="kpi-value">{fmtNumber(totalSaya)}</div>
+        </div>
+        <div className="card">
+          <div className="kpi-label">Tidak ada di OCS</div>
+          <div
+            className="kpi-value"
+            style={{ color: sesi?.verifikasi.tidakAda ? 'var(--negative)' : 'var(--ink)' }}
+          >
+            {fmtNumber(sesi?.verifikasi.tidakAda ?? 0)}
+          </div>
+          <div style={{ fontSize: 11.5, color: 'var(--ink-muted)' }}>
+            {sesi?.verifikasi.menunggu
+              ? `${fmtNumber(sesi.verifikasi.menunggu)} sedang diperiksa`
+              : 'tidak ikut dihitung'}
+          </div>
         </div>
       </div>
 

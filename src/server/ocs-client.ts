@@ -454,3 +454,59 @@ export async function diagnosa(params: {
 
   return hasil;
 }
+
+/* ==================================================================
+ * OData /odata/DTO_Orders — dipakai dashboard TV.
+ *
+ * Dibongkar dari lalu lintas halaman ocs.iegsystem.id/orders-v1 pada
+ * 18 September 2026. Halaman itu memanggil:
+ *
+ *   /odata/DTO_Orders?$orderby=CreatedAt desc&$top=25
+ *     &$filter=(StatusCode eq 30000) and (CreatedAt ge 2026-09-16T17:00:00Z)
+ *     &$count=true
+ *
+ * Jadi $filter, $top, $count, dan $orderby semuanya didukung. Dengan
+ * $top=0&$count=true kita dapat jumlahnya saja tanpa menarik satu baris pun —
+ * itu yang dipakai dashboard.
+ * ================================================================== */
+
+/** Kode status dari /MasterData/GetStatusList (18 Sep 2026). */
+export const STATUS_OCS = {
+  PICKED: 20013,
+  PACKED: 20022,
+  MANIFESTED: 20030,
+  IN_TRANSIT: 30000,
+} as const;
+
+/**
+ * Nama kolom nomor resi di DTO_Orders. Dibuat bisa disetel karena belum
+ * terverifikasi langsung — jalankan `npm run ocs:odata` dari PC untuk melihat
+ * daftar kolom aslinya, lalu sesuaikan kalau ternyata bukan TrackingNumber.
+ */
+export function kolomResiOdata(): string {
+  return process.env.OCS_ODATA_FIELD_RESI || 'TrackingNumber';
+}
+
+export type OdataHasil<T> = { '@odata.count'?: number; value?: T[] };
+
+export function odataOrders<T = Record<string, unknown>>(
+  query: Record<string, string>,
+  cred?: Kredensial | null,
+): Promise<OdataHasil<T>> {
+  const qs = Object.entries(query)
+    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+    .join('&');
+  return call<OdataHasil<T>>(`/odata/DTO_Orders?${qs}`, { method: 'GET' }, cred);
+}
+
+/** Jumlah order yang cocok dengan filter, tanpa menarik barisnya. */
+export async function hitungOrder(filter: string, cred?: Kredensial | null): Promise<number> {
+  const hasil = await odataOrders({ $filter: filter, $top: '0', $count: 'true' }, cred);
+  const n = hasil['@odata.count'];
+  return Number.isFinite(Number(n)) ? Number(n) : 0;
+}
+
+/** Apostrof di literal string OData di-escape dengan menggandakannya. */
+export function kutipOdata(v: string): string {
+  return `'${v.replace(/'/g, "''")}'`;
+}

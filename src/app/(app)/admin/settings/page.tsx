@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { apiGet, apiPost } from '@/lib/client';
 import { toast } from '@/components/Toast';
@@ -41,11 +42,52 @@ export default function SettingsPage() {
   const [langkah, setLangkah] = useState<Langkah[] | null>(null);
   const [diagBusy, setDiagBusy] = useState(false);
   const { jenis: perangkat, mode: modePerangkat, setMode: setModePerangkat } = usePerangkat();
+  const [tv, setTv] = useState<{ menit: number; min: number; maks: number; terakhir: string | null; ocsError: string | null } | null>(null);
+  const [tvMenit, setTvMenit] = useState('5');
+  const [tvBusy, setTvBusy] = useState(false);
 
   const muat = useCallback(async () => {
     const res = await apiGet<SyncStatus>('/api/sync-status');
     if (res.ok) setStatus(res.data);
   }, []);
+
+  type TvSetelan = { menit: number; min: number; maks: number; terakhir: string | null; ocsError: string | null };
+
+  const muatTv = useCallback(async () => {
+    const res = await apiGet<TvSetelan>('/api/tv/setelan');
+    if (res.ok) {
+      setTv(res.data);
+      setTvMenit(String(res.data.menit));
+    }
+  }, []);
+
+  const simpanTv = async () => {
+    setTvBusy(true);
+    const res = await apiPost<TvSetelan>('/api/tv/setelan', { menit: Number(tvMenit) });
+    setTvBusy(false);
+    if (!res.ok) {
+      toast('error', res.error);
+      return;
+    }
+    toast('success', `Data OCS akan ditarik tiap ${res.data.menit} menit.`);
+    void muatTv();
+  };
+
+  const tarikTv = async () => {
+    setTvBusy(true);
+    const res = await apiPost<TvSetelan>('/api/tv/setelan', { tarikSekarang: true });
+    setTvBusy(false);
+    if (!res.ok) {
+      toast('error', res.error);
+      return;
+    }
+    toast(res.data.ocsError ? 'warning' : 'success', res.data.ocsError ?? 'Data TV diperbarui.');
+    void muatTv();
+  };
+
+  useEffect(() => {
+    void muatTv();
+  }, [muatTv]);
 
   useEffect(() => {
     void apiGet<Expedisi[]>('/api/expedisi').then((r) => {
@@ -224,6 +266,65 @@ export default function SettingsPage() {
             ))}
           </div>
         )}
+      </div>
+
+      <div className="card" style={{ display: 'grid', gap: 10 }}>
+        <strong style={{ fontSize: 14 }}>Dashboard TV</strong>
+        <p style={{ fontSize: 13, color: 'var(--ink-label)', margin: 0 }}>
+          Layar monitor gudang di <code>/tv</code> — dibuka tanpa login. Angka Awaiting to Shipment dan Awaiting
+          to Pickup diambil dari database sendiri, sedangkan Order Picked dan In Transit ditarik dari OCS. Karena
+          penarikan OCS mahal, hasilnya disimpan sebagai satu snapshot dan <strong>ditimpa utuh</strong> setiap
+          penarikan — tidak menumpuk, jadi status paket yang berubah selalu terwakili angka terbaru.
+        </p>
+
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+          <div style={{ minWidth: 200 }}>
+            <label className="field-label" htmlFor="tvmenit">
+              Tarik data OCS tiap
+            </label>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <input
+                id="tvmenit"
+                className="input-field"
+                type="number"
+                min={tv?.min ?? 1}
+                max={tv?.maks ?? 120}
+                value={tvMenit}
+                onChange={(e) => setTvMenit(e.target.value)}
+                style={{ width: 100 }}
+              />
+              <span style={{ fontSize: 13, color: 'var(--ink-label)' }}>menit</span>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={tvBusy}
+            onClick={() => void simpanTv()}
+          >
+            {tvBusy ? 'Menyimpan…' : 'Simpan jeda'}
+          </button>
+
+          <button type="button" className="btn btn-secondary" disabled={tvBusy} onClick={() => void tarikTv()}>
+            Tarik sekarang
+          </button>
+
+          <Link href="/tv" target="_blank" className="btn btn-ghost">
+            Buka layar TV
+          </Link>
+        </div>
+
+        <p style={{ fontSize: 12, color: 'var(--ink-muted)', margin: 0 }}>
+          Penarikan terakhir: <strong>{tv?.terakhir ? fmtDateTime(tv.terakhir) : 'belum pernah'}</strong>
+          {tv ? ` · jeda sekarang ${tv.menit} menit` : ''}
+          {tv?.ocsError ? ` · ${tv.ocsError}` : ''}
+        </p>
+        <p style={{ fontSize: 12, color: 'var(--ink-muted)', margin: 0 }}>
+          Jeda kecil berarti angka lebih segar tapi OCS lebih sering ditanya. Untuk layar yang dilihat sambil
+          lalu, 5 menit biasanya cukup. Penarikan tidak pernah dijalankan saat halaman TV dibuka — halaman hanya
+          membaca snapshot, jadi TV tidak pernah menunggu OCS.
+        </p>
       </div>
 
       <div className="card" style={{ display: 'grid', gap: 10 }}>

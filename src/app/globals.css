@@ -726,6 +726,7 @@ body {
 .disp-tile[data-warna='hijau'] { border-top-color: var(--hijau); }
 .disp-tile[data-warna='oranye'] { border-top-color: var(--oranye); }
 .disp-tile[data-warna='navy'] { border-top-color: var(--navy); }
+.disp-tile[data-warna='merah'] { border-top-color: #a11212; }
 .disp-tile-label { font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: var(--abu); }
 .disp-tile-angka { font-size: 30px; font-weight: 800; color: var(--navy-ink); line-height: 1.1; font-variant-numeric: tabular-nums; }
 .disp-tile-ket { font-size: 11.5px; color: var(--abu); margin-top: 2px; }
@@ -858,3 +859,84 @@ body {
 }
 @keyframes scan-flash-masuk { from { opacity: 0; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .scan-flash { animation: none; } }
+
+/* ==================================================================
+   Dashboard TV — layar besar gudang, dibaca dari seberang ruangan.
+
+   Semua ukuran memakai vw/vmin, bukan px: satu berkas ini harus terbaca
+   di TV 43" maupun 65" tanpa disetel ulang. Warnanya dikunci gelap dan
+   TIDAK mengikuti tema Morning/Evening — TV tidak punya orang yang
+   menekan tombol pengalih, dan latar gelap paling nyaman dipandang
+   seharian dari jauh.
+   ================================================================== */
+.tv-root {
+  --tv-bg: #0b1220;
+  --tv-kartu: #111b2e;
+  --tv-garis: #1e2c47;
+  --tv-teks: #eaf0fb;
+  --tv-redup: #8a9cbb;
+  min-height: 100vh;
+  background: var(--tv-bg);
+  color: var(--tv-teks);
+}
+.tv-wrap {
+  min-height: 100vh;
+  padding: 2.2vmin 2.6vmin;
+  display: flex;
+  flex-direction: column;
+  gap: 2vmin;
+  font-variant-numeric: tabular-nums;
+}
+.tv-top { display: flex; align-items: center; gap: 1.4vmin; }
+.tv-brand { font-size: 2.1vmin; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--tv-redup); }
+.tv-spacer { flex: 1; }
+.tv-jam { font-size: 2.1vmin; font-weight: 700; color: var(--tv-teks); }
+.tv-pil { font-size: 1.7vmin; font-weight: 800; border-radius: 999px; padding: .5vmin 1.4vmin; }
+.tv-pil-merah { background: #4a0f0f; color: #ff9a9a; }
+.tv-pil-kuning { background: #4a3a0f; color: #ffd98a; }
+
+/* Kartu setinggi isinya saja; sisa ruang diberikan ke tabel di bawahnya,
+   supaya tidak ada rongga kosong besar di tengah layar. */
+.tv-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2vmin; flex: 0 0 auto; }
+.tv-kartu {
+  background: var(--tv-kartu);
+  border: .25vmin solid var(--tv-garis);
+  border-top-width: 1vmin;
+  border-radius: 1.6vmin;
+  padding: 2.4vmin 2.2vmin;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.tv-kartu { min-height: 26vh; }
+.tv-kartu[data-warna='ungu'] { border-top-color: #8b5cf6; }
+.tv-kartu[data-warna='kuning'] { border-top-color: #eab308; }
+.tv-kartu[data-warna='hijau'] { border-top-color: #22c55e; }
+.tv-kartu[data-warna='biru'] { border-top-color: #38bdf8; }
+
+.tv-label { font-size: 2.3vmin; font-weight: 800; color: var(--tv-redup); text-transform: uppercase; letter-spacing: .05em; }
+.tv-angka { font-size: 13vmin; font-weight: 900; line-height: 1; margin: 1vmin 0; letter-spacing: -.03em; }
+.tv-ket { font-size: 1.8vmin; color: var(--tv-redup); }
+
+.tv-tabel-bungkus {
+  background: var(--tv-kartu); border: .25vmin solid var(--tv-garis);
+  border-radius: 1.6vmin; overflow: hidden; flex: 1;
+}
+/* Baris ikut melebar mengisi sisa ruang, jadi tidak ada rongga kosong di bawah. */
+.tv-tabel { width: 100%; height: 100%; border-collapse: collapse; font-size: 2vmin; }
+.tv-tabel th {
+  text-align: left; padding: 1.2vmin 2.2vmin; color: var(--tv-redup);
+  font-size: 1.7vmin; text-transform: uppercase; letter-spacing: .05em;
+  border-bottom: .25vmin solid var(--tv-garis);
+}
+.tv-tabel td { padding: 1.1vmin 2.2vmin; border-bottom: .15vmin solid var(--tv-garis); font-weight: 700; }
+.tv-tabel tr:last-child td { border-bottom: 0; }
+.tv-tabel th:not(:first-child), .tv-tabel td:not(:first-child) { text-align: right; width: 22%; }
+
+.tv-kaki { font-size: 1.6vmin; color: var(--tv-redup); text-align: right; }
+
+/* TV dipasang tegak (portrait) atau layar sempit: dua kolom. */
+@media (max-aspect-ratio: 1/1), (max-width: 900px) {
+  .tv-grid { grid-template-columns: repeat(2, 1fr); }
+  .tv-angka { font-size: 11vmin; }
+}

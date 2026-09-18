@@ -44,6 +44,7 @@ type Status = {
   ringkasan: BarisEkspedisi[];
   submits: BatchSubmit[];
   belumSubmit: number;
+  verifikasi: { menunggu: number; tidakAda: number };
 };
 
 type Scan1Result = {
@@ -449,6 +450,19 @@ export default function ScanDesktopPage() {
             <div className="disp-tile-angka">{fmtNumber(jenis.length)}</div>
             <div className="disp-tile-ket">{jenis.slice(0, 4).join(', ') || '—'}</div>
             <span className="disp-chip">Batch ini</span>
+          </div>
+
+          <div className="disp-tile" data-warna={st.verifikasi.tidakAda ? 'merah' : 'hijau'}>
+            <div className="disp-tile-label">Tidak ada di OCS</div>
+            <div className="disp-tile-angka">{fmtNumber(st.verifikasi.tidakAda)}</div>
+            <div className="disp-tile-ket">
+              {st.verifikasi.menunggu
+                ? `${fmtNumber(st.verifikasi.menunggu)} resi sedang diperiksa`
+                : 'Semua resi sudah diperiksa'}
+            </div>
+            <span className="disp-chip" data-warna={st.verifikasi.tidakAda ? 'kuning' : 'hijau'}>
+              {st.verifikasi.tidakAda ? 'Tidak ikut dihitung' : 'Bersih'}
+            </span>
           </div>
         </div>
 

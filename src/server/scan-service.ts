@@ -4,6 +4,7 @@ import { cleanResi, detectExpedisi, parsePrefixes } from '@/lib/resi';
 import { compactDate, dateOnly, todayISO } from '@/lib/date';
 import { lupakan, memo } from '@/lib/cache';
 import { cariOrder } from './order-lookup';
+import { statusVerifikasi } from './verify-service';
 
 export type ScanTone = 'success' | 'double' | 'failed';
 
@@ -178,6 +179,9 @@ export async function scanFirst(user: SessionUser, rawResi: string): Promise<Sca
         // identitasnya yang satunya lagi.
         ocsOrderId: orderId,
         ocsTracking: tracking,
+        // Ekspedisi tidak terbaca dari pola nomor maupun pemetaan order ->
+        // antrekan untuk diperiksa ke OCS setelah balasan ini terkirim.
+        verifyState: expedisiId ? 'NONE' : 'PENDING',
       },
     });
     return {
@@ -270,6 +274,7 @@ export async function statusSesi(user: SessionUser, take = 300) {
       jenisEkspedisi: [] as string[],
       ringkasan: [] as BarisEkspedisi[],
       submits: [] as BatchSubmit[],
+      verifikasi: await statusVerifikasi(dateOnly(iso)),
       belumSubmit: 0,
       totalHariIni: await countAwaitingToday(iso),
       tanggal: iso,
@@ -284,7 +289,7 @@ export async function statusSesi(user: SessionUser, take = 300) {
     expedisi: { code: string; name: string } | null;
   };
 
-  const [rows, total, ringkasan, submits] = await Promise.all([
+  const [rows, total, ringkasan, submits, verifikasi] = await Promise.all([
     prisma.scanItem.findMany({
       where: { sessionId: sesi.id, status: { not: 'VOID' } },
       orderBy: { id: 'desc' },
@@ -297,9 +302,12 @@ export async function statusSesi(user: SessionUser, take = 300) {
         expedisi: { select: { code: true, name: true } },
       },
     }),
-    prisma.scanItem.count({ where: { sessionId: sesi.id, status: { not: 'VOID' } } }),
+    prisma.scanItem.count({
+      where: { sessionId: sesi.id, status: { not: 'VOID' }, verifyState: { not: 'INVALID' } },
+    }),
     ringkasanEkspedisi(sesi.id),
     daftarSubmit(sesi.id),
+    statusVerifikasi(dateOnly(iso)),
   ]);
 
   const daftar = rows as Row[];
@@ -327,15 +335,22 @@ export async function statusSesi(user: SessionUser, take = 300) {
     jenisEkspedisi: jenis,
     ringkasan,
     submits,
+    verifikasi,
     belumSubmit: ringkasan.reduce((n: number, r: BarisEkspedisi) => n + r.jumlah, 0),
     totalHariIni: await countAwaitingToday(iso),
     tanggal: iso,
   };
 }
 
+/**
+ * Resi yang menunggu diproses hari ini.
+ *
+ * Yang sudah divonis TIDAK ADA di OCS tidak ikut dihitung — itu seluruh maksud
+ * pemeriksaan latar belakang: angka di layar harus sama dengan barang fisik.
+ */
 export function countAwaitingToday(iso = todayISO()) {
   return prisma.scanItem.count({
-    where: { scanDate: dateOnly(iso), status: 'AWAITING_PICKUP' },
+    where: { scanDate: dateOnly(iso), status: 'AWAITING_PICKUP', verifyState: { not: 'INVALID' } },
   });
 }
 
@@ -414,7 +429,8 @@ export async function ringkasanEkspedisi(sessionId: number): Promise<BarisEksped
     SELECT e.id AS expedisiId, e.code AS code, e.name AS name, COUNT(*) AS jumlah
     FROM ScanItem i
     LEFT JOIN Expedisi e ON e.id = i.expedisiId
-    WHERE i.sessionId = ${sessionId} AND i.submitId IS NULL AND i.status <> 'VOID'
+    WHERE i.sessionId = ${sessionId} AND i.submitId IS NULL
+      AND i.status <> 'VOID' AND i.verifyState <> 'INVALID'
     GROUP BY e.id, e.code, e.name
     ORDER BY COUNT(*) DESC
   `) as Baris[];
@@ -506,6 +522,7 @@ export async function submitEkspedisi(
       sessionId,
       submitId: null,
       status: { not: 'VOID' },
+      verifyState: { not: 'INVALID' },
       expedisiId: expedisiId ?? null,
     },
     data: { submitId: submit.id },
