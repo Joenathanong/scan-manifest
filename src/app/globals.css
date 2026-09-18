@@ -585,10 +585,23 @@ body {
     font-size: 15px;
     font-weight: 600;
     display: flex;
-    align-items: center;
-    gap: 10px;
+    flex-direction: column;
+    justify-content: center;
+    align-items: flex-start;
+    gap: 3px;
     min-height: 56px;
   }
+  /* Nomor resi dibuat sebesar mungkin: operator memegang PDT sambil mengangkat
+     paket, jadi harus terbaca sekilas tanpa mendekatkan layar ke mata. */
+  .scan-feed-resi {
+    font-family: var(--font-mono);
+    font-size: clamp(22px, 7vw, 34px);
+    font-weight: 800;
+    line-height: 1.1;
+    letter-spacing: -.01em;
+    word-break: break-all;
+  }
+  .scan-feed-ket { font-size: 13px; font-weight: 600; opacity: .92; }
   .scan-feed-success { background: var(--positive-bg); color: var(--positive); border: 1px solid var(--positive-border); }
   .scan-feed-double { background: var(--critical-bg); color: var(--critical); border: 1px solid var(--critical-border); }
   .scan-feed-failed { background: var(--negative-bg); color: var(--negative); border: 1px solid var(--negative-border); }
@@ -758,7 +771,16 @@ body {
 .disp-mini-nilai { font-size: 15px; font-weight: 700; color: var(--navy-ink); }
 .disp-bantu { font-size: 11.5px; color: var(--abu); margin-top: 10px; line-height: 1.5; }
 
-.disp-feed { border-radius: 8px; padding: 10px 12px; font-size: 14px; font-weight: 700; margin-top: 10px; }
+.disp-feed { border-radius: 8px; padding: 12px 14px; font-size: 14px; font-weight: 700; margin-top: 10px; }
+.disp-feed-resi {
+  font-family: var(--font-mono);
+  font-size: clamp(24px, 2.8vw, 40px);
+  font-weight: 800;
+  line-height: 1.1;
+  letter-spacing: -.01em;
+  word-break: break-all;
+}
+.disp-feed-ket { font-size: 13px; font-weight: 700; opacity: .92; margin-top: 2px; }
 .disp-feed[data-nada='idle'] { background: #f6f8fb; color: var(--abu); border: 1px solid var(--garis); }
 .disp-feed[data-nada='success'] { background: #e4f4ea; color: #146c39; border: 1px solid #a9d9bd; }
 .disp-feed[data-nada='double'] { background: #fff3d4; color: #8a6200; border: 1px solid #f0d089; }

@@ -11,6 +11,7 @@ import PerangkatHint from '@/components/PerangkatHint';
 import ScanFlash, { kunciFlash, type FlashData } from '@/components/ScanFlash';
 import { popupAktif } from '@/lib/scan-prefs';
 import { fmtNumber, fmtTime } from '@/lib/date';
+import { pesanTanpaResi } from '@/lib/teks';
 
 type Scan1Result = {
   status: 'OK' | 'DOUBLE' | 'REJECT';
@@ -29,7 +30,7 @@ type Row = {
   expedisi: { code: string } | null;
 };
 
-type Feed = { tone: 'success' | 'double' | 'failed' | 'idle' | 'queued'; text: string };
+type Feed = { tone: 'success' | 'double' | 'failed' | 'idle' | 'queued'; text: string; resi?: string };
 
 export default function Scan1Page() {
   const [value, setValue] = useState('');
@@ -80,7 +81,7 @@ export default function Scan1Page() {
 
     // Dobel lokal: tertangkap walau jaringan mati.
     if (antreanLokal.includes(resi)) {
-      setFeed({ tone: 'double', text: `${resi} sudah discan di perangkat ini.` });
+      setFeed({ tone: 'double', text: 'Sudah discan di perangkat ini.', resi });
       playForTone('double');
       vibrate([60, 60, 60]);
       // Ekspedisi diambil dari daftar scan yang sudah tampil, supaya dobel
@@ -98,14 +99,14 @@ export default function Scan1Page() {
 
     if (res.queued) {
       setAntreanLokal((a) => [...a, resi]);
-      setFeed({ tone: 'queued', text: `${resi} masuk antrean — jaringan sedang putus.` });
+      setFeed({ tone: 'queued', text: 'Masuk antrean — jaringan sedang putus.', resi });
       playForTone('success');
       vibrate(40);
       tampilkanFlash('double', 'ANTREAN OFFLINE', 'TERSIMPAN — DIKIRIM SAAT JARINGAN KEMBALI', resi);
       return;
     }
     if (res.error || !res.data) {
-      setFeed({ tone: 'failed', text: res.error ?? 'Gagal menyimpan.' });
+      setFeed({ tone: 'failed', text: res.error ?? 'Gagal menyimpan.', resi });
       playForTone('failed');
       vibrate([120, 60, 120]);
       tampilkanFlash('failed', 'GAGAL', res.error ?? 'GAGAL MENYIMPAN', resi);
@@ -114,7 +115,7 @@ export default function Scan1Page() {
 
     const data = res.data;
     setAntreanLokal((a) => [...a, resi]);
-    setFeed({ tone: data.tone, text: data.message });
+    setFeed({ tone: data.tone, text: pesanTanpaResi(data.message, data.resi), resi: data.resi });
     playForTone(data.tone);
     vibrate(data.tone === 'success' ? 40 : [120, 60, 120]);
     tampilkanFlash(
@@ -212,7 +213,8 @@ export default function Scan1Page() {
           spellCheck={false}
         />
         <div className={feedClass} aria-live="polite">
-          {feed.text}
+          {feed.resi && <span className="scan-feed-resi">{feed.resi}</span>}
+          <span className={feed.resi ? 'scan-feed-ket' : undefined}>{feed.text}</span>
         </div>
       </div>
 

@@ -7,6 +7,7 @@ import { playForTone } from '@/lib/audio';
 import { sendOrQueue } from '@/lib/offline-queue';
 import { toast } from '@/components/Toast';
 import { fmtDate, fmtDateTime, fmtNumber, fmtTime } from '@/lib/date';
+import { pesanTanpaResi } from '@/lib/teks';
 import SoundToggle from '@/components/SoundToggle';
 import PopupToggle from '@/components/PopupToggle';
 import PerangkatHint from '@/components/PerangkatHint';
@@ -68,7 +69,7 @@ export default function ScanDesktopPage() {
   const [shift, setShift] = useState(SHIFT[0]);
   const [busy, setBusy] = useState(false);
   const [nilai, setNilai] = useState('');
-  const [feed, setFeed] = useState<{ nada: string; teks: string }>({
+  const [feed, setFeed] = useState<{ nada: string; teks: string; resi?: string }>({
     nada: 'idle',
     teks: 'Siap. Scan barcode atau ketik nomor resi lalu tekan Enter.',
   });
@@ -160,20 +161,20 @@ export default function ScanDesktopPage() {
     const res = await sendOrQueue<Scan1Result>('scan1', '/api/scan1', { resi }, resi);
 
     if (res.queued) {
-      setFeed({ nada: 'double', teks: `${resi} masuk antrean — jaringan sedang putus.` });
+      setFeed({ nada: 'double', teks: 'Masuk antrean — jaringan sedang putus.', resi });
       playForTone('success');
       tampilkanFlash('double', 'ANTREAN OFFLINE', 'TERSIMPAN — DIKIRIM SAAT JARINGAN KEMBALI', resi);
       return;
     }
     if (res.error || !res.data) {
-      setFeed({ nada: 'failed', teks: res.error ?? 'Gagal menyimpan.' });
+      setFeed({ nada: 'failed', teks: res.error ?? 'Gagal menyimpan.', resi });
       playForTone('failed');
       tampilkanFlash('failed', 'GAGAL', res.error ?? 'GAGAL MENYIMPAN', resi);
       return;
     }
 
     const d = res.data;
-    setFeed({ nada: d.tone, teks: d.message });
+    setFeed({ nada: d.tone, teks: pesanTanpaResi(d.message, d.resi), resi: d.resi });
     setTerakhir({ ekspedisi: d.expedisi });
     playForTone(d.tone);
 
@@ -445,7 +446,8 @@ export default function ScanDesktopPage() {
               </div>
 
               <div className="disp-feed" data-nada={feed.nada} aria-live="polite">
-                {feed.teks}
+                {feed.resi && <div className="disp-feed-resi">{feed.resi}</div>}
+                <div className={feed.resi ? 'disp-feed-ket' : undefined}>{feed.teks}</div>
               </div>
 
               <p className="disp-bantu">
