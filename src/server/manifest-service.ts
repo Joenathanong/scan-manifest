@@ -338,16 +338,48 @@ export async function docTotals(docId: number) {
 }
 
 /** SCAN 2 — resi diikat ke basket, status jadi PICKUP, lalu dikirim ke OCS. */
+/**
+ * Ambil dokumen manifest + ekspedisi keranjangnya dalam SATU query.
+ *
+ * Kenapa SQL mentah dan bukan include biasa: skema ini memakai
+ * relationMode = "prisma" (wajib untuk TiDB), dan dalam mode itu Prisma tidak
+ * boleh memakai JOIN — setiap tingkat relasi dikirim sebagai query terpisah.
+ * Jadi findUnique dengan include basket -> expedisi sebenarnya TIGA perjalanan
+ * ke database, dan ketiganya berurutan. Itulah yang membuat Scan 2 terasa
+ * lebih berat daripada Scan 1 walau kerjanya mirip.
+ *
+ * JOIN di SQL mentah tidak melanggar apa pun: relationMode hanya mengatur cara
+ * Prisma menjaga integritas relasi, bukan melarang JOIN di database.
+ */
+type DocRingkas = { id: number; status: string; shipper: string; basketId: number; expedisiId: number };
+
+async function bacaDocRingkas(docId: number): Promise<DocRingkas | null> {
+  const baris = await prisma.$queryRaw<DocRingkas[]>`
+    SELECT d.id AS id, d.status AS status, d.shipper AS shipper,
+           d.basketId AS basketId, b.expedisiId AS expedisiId
+    FROM ManifestDoc d
+    JOIN Basket b ON b.id = d.basketId
+    WHERE d.id = ${docId}
+    LIMIT 1
+  `;
+  const r = baris[0];
+  if (!r) return null;
+  return {
+    id: Number(r.id),
+    status: String(r.status),
+    shipper: String(r.shipper),
+    basketId: Number(r.basketId),
+    expedisiId: Number(r.expedisiId),
+  };
+}
+
 export async function scanSecond(user: SessionUser, docId: number, rawResi: string): Promise<Scan2Result> {
   const resi = cleanResi(rawResi);
 
   // Dokumen dan pasangan order ID <-> resi sama-sama hanya butuh docId, jadi
   // ditembak berbarengan (lihat catatan kecepatan di scan-service).
   const [doc, candidate] = await Promise.all([
-    prisma.manifestDoc.findUnique({
-      where: { id: docId },
-      include: { basket: { include: { expedisi: true } } },
-    }),
+    bacaDocRingkas(docId),
     // Sengaja TIDAK disaring used:false supaya kandidat yang sudah terpakai
     // tetap terbaca — justru itu penanda dobel.
     prisma.manifestCandidate.findFirst({
@@ -361,8 +393,22 @@ export async function scanSecond(user: SessionUser, docId: number, rawResi: stri
 
   const now = new Date();
 
-  const catatTolak = (reason: string) =>
-    prisma.manifestScan.create({
+  /**
+   * Catat penolakan. Barcode yang ditembak berkali-kali TIDAK menghasilkan
+   * baris baru tiap kali — barisnya tetap satu, hanya dupCount dan jamnya yang
+   * diperbarui. Tanpa ini satu paket yang discan lima kali meninggalkan lima
+   * baris merah dan daftar scan jadi tidak terbaca.
+   */
+  const catatTolak = async (reason: string) => {
+    const lama = tolakSebelumnya;
+    if (lama) {
+      await prisma.manifestScan.update({
+        where: { id: lama.id },
+        data: { dupCount: { increment: 1 }, manifestTime: now, reason: reason.slice(0, 180) },
+      });
+      return lama.dupCount + 1;
+    }
+    await prisma.manifestScan.create({
       data: {
         docId,
         scanResult: resi,
@@ -373,6 +419,8 @@ export async function scanSecond(user: SessionUser, docId: number, rawResi: stri
         scannedById: user.id,
       },
     });
+    return 1;
+  };
 
   const fail = async (
     status: Scan2Result['status'],
@@ -384,8 +432,15 @@ export async function scanSecond(user: SessionUser, docId: number, rawResi: stri
   };
 
   const dobel = async (message: string, reason = 'Double'): Promise<Scan2Result> => {
-    await catatTolak(reason);
-    return { status: 'DOUBLE', tone: 'double', message, resi, reason, ...(await docTotals(docId)) };
+    const kali = await catatTolak(reason);
+    return {
+      status: 'DOUBLE',
+      tone: 'double',
+      message: kali > 1 ? `${message} (ditembak ${kali}×)` : message,
+      resi,
+      reason,
+      ...(await docTotals(docId)),
+    };
   };
 
   if (resi.length < 6) {
@@ -413,8 +468,8 @@ export async function scanSecond(user: SessionUser, docId: number, rawResi: stri
     { ocsTracking: { in: identitas } },
   ];
 
-  // Tiga pemeriksaan ini saling bebas, jadi dijalankan berbarengan.
-  const [already, terpakai, item] = await Promise.all([
+  // Empat pemeriksaan ini saling bebas, jadi dijalankan berbarengan.
+  const [already, terpakai, item, tolakSebelumnya] = await Promise.all([
     // Sudah pernah discan di basket ini? Dicek lewat ketiga kolom sekaligus,
     // jadi resi yang menyusul order ID (atau sebaliknya) tetap tertangkap.
     prisma.manifestScan.findFirst({
@@ -432,6 +487,13 @@ export async function scanSecond(user: SessionUser, docId: number, rawResi: stri
     prisma.scanItem.findFirst({
       where: { status: { not: 'VOID' }, OR: cocokItem },
       orderBy: { id: 'asc' },
+    }),
+    // Baris penolakan yang sudah ada untuk barcode ini — kalau ada, yang
+    // dinaikkan penghitungnya, bukan ditambah baris baru.
+    prisma.manifestScan.findFirst({
+      where: { docId, valid: false, scanResult: resi },
+      select: { id: true, dupCount: true },
+      orderBy: { id: 'desc' },
     }),
   ]);
 
@@ -461,9 +523,8 @@ export async function scanSecond(user: SessionUser, docId: number, rawResi: stri
   let tracking = candidate?.trackingNumber || resi;
 
   if (candidate) {
-    if (!candidate.used) {
-      await prisma.manifestCandidate.update({ where: { id: candidate.id }, data: { used: true } });
-    }
+    // Penandaan used TIDAK dikirim sendiri di sini — ikut menumpang batch
+    // tulis di bawah supaya tidak memakan satu perjalanan jaringan tersendiri.
   } else if (ocs.ocsEnabled()) {
     try {
       const check = await ocs.checkInvalidManifest(resi, doc.shipper, await kredensialUntukUser(user.id));
@@ -497,28 +558,33 @@ export async function scanSecond(user: SessionUser, docId: number, rawResi: stri
     }
   }
 
-  const scan = await prisma.manifestScan.create({
-    data: {
-      docId,
-      scanResult: resi,
-      manifestTime: now,
-      orderId: orderId || null,
-      trackingNumber: tracking,
-      shippingProvider: doc.shipper,
-      valid: true,
-      itemId: item.id,
-      scannedById: user.id,
-    },
-  });
-  void scan;
-
-  await withRetry(() =>
+  /* Semua tulisan DAN ketiga hitungan dikirim sebagai SATU batch.
+   *
+   * Ini bagian yang membuat Scan 2 setara Scan 1: dulu simpan scan, ubah
+   * status resi, tandai kandidat, lalu hitung total — empat perjalanan
+   * berurutan ke TiDB. Dijadikan satu transaksi, semuanya berangkat sekali
+   * jalan, dan hitungannya otomatis sudah termasuk baris yang barusan dibuat
+   * karena dieksekusi di dalam transaksi yang sama. */
+  const tulis = [
+    prisma.manifestScan.create({
+      data: {
+        docId,
+        scanResult: resi,
+        manifestTime: now,
+        orderId: orderId || null,
+        trackingNumber: tracking,
+        shippingProvider: doc.shipper,
+        valid: true,
+        itemId: item.id,
+        scannedById: user.id,
+      },
+    }),
     prisma.scanItem.update({
       where: { id: item.id },
       data: {
         status: 'PICKUP',
         basketId: doc.basketId,
-        expedisiId: doc.basket.expedisiId,
+        expedisiId: doc.expedisiId,
         manifestDocId: docId,
         scan2At: now,
         scan2ById: user.id,
@@ -527,13 +593,23 @@ export async function scanSecond(user: SessionUser, docId: number, rawResi: stri
         ocsTracking: tracking,
       },
     }),
-  );
-
-  // Sinkron otomatis tiap 50 scan supaya tidak menumpuk.
-  const totals = await docTotals(docId);
-  if (totals.totalValid > 0 && totals.totalValid % 50 === 0) {
-    void syncDoc(docId).catch(() => undefined);
+  ];
+  if (candidate && !candidate.used) {
+    tulis.push(
+      prisma.manifestCandidate.update({ where: { id: candidate.id }, data: { used: true } }) as never,
+    );
   }
+
+  const hasil = (await withRetry(() =>
+    prisma.$transaction([
+      ...tulis,
+      prisma.manifestScan.count({ where: { docId, valid: true } }),
+      prisma.manifestScan.count({ where: { docId, valid: false } }),
+      prisma.scanItem.count({ where: { manifestDocId: docId, status: 'PICKUP' } }),
+    ]),
+  )) as unknown[];
+  const [totalValid, totalNotValid, sisaBasket] = hasil.slice(tulis.length) as number[];
+  const totals = { totalValid, totalNotValid, sisaBasket };
 
   return {
     status: 'OK',
@@ -556,6 +632,44 @@ function payloadOf(rows: { scanResult: string; manifestTime: Date; orderId: stri
 }
 
 /** Kirim scan yang belum tersinkron ke OCS (SaveTemporaryManifestV2). */
+/**
+ * Kapan terakhir dokumen ini dikirim ke OCS, per instance. Dipakai untuk
+ * meredam pengiriman: kalau operator menembak 5 resi per detik, kita tidak
+ * mau memanggil OCS 5 kali per detik.
+ */
+const sinkronTerakhir = ((globalThis as unknown as { __iegSinkron?: Map<number, number> }).__iegSinkron ??=
+  new Map<number, number>());
+
+const JEDA_SINKRON_MS = 8000;
+const AMBANG_TERTUNDA = 20;
+
+/**
+ * Kirim ke OCS kalau sudah waktunya. Dipanggil lewat after() di route, jadi
+ * berjalan SETELAH balasan sampai ke operator — scan tidak pernah menunggu OCS.
+ *
+ * Dua pemicu: sudah lewat 8 detik sejak kiriman terakhir, atau sudah ada 20
+ * scan yang menunggu. Yang mana pun duluan. Dulu pemicunya "tiap kelipatan 50
+ * scan", jadi kalau batch berhenti di resi ke-30 sisanya baru sampai ke OCS
+ * saat operator menekan Submit.
+ */
+export async function sinkronBerkala(docId: number): Promise<void> {
+  const sekarang = Date.now();
+  const lalu = sinkronTerakhir.get(docId) ?? 0;
+  const lewatWaktu = sekarang - lalu >= JEDA_SINKRON_MS;
+
+  if (!lewatWaktu) {
+    const tertunda = await prisma.manifestScan.count({ where: { docId, valid: true, syncedAt: null } });
+    if (tertunda < AMBANG_TERTUNDA) return;
+  }
+
+  sinkronTerakhir.set(docId, sekarang);
+  try {
+    await syncDoc(docId);
+  } catch {
+    // Kegagalan sudah dicatat di lastError + outbox oleh syncDoc.
+  }
+}
+
 export async function syncDoc(docId: number): Promise<{ sent: number; error: string | null }> {
   const doc = await prisma.manifestDoc.findUnique({ where: { id: docId } });
   if (!doc) throw new ApiError('Dokumen tidak ditemukan.', 404);

@@ -26,6 +26,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ docId: string 
         orderId: true,
         valid: true,
         reason: true,
+        dupCount: true,
         manifestTime: true,
         syncedAt: true,
       },

@@ -265,6 +265,10 @@ model ManifestScan {
   shippingProvider String   @db.VarChar(40)
   valid            Boolean  @default(true)
   reason           String?  @db.VarChar(191)
+  // Berapa kali barcode ini ditembak ulang. Scan dobel TIDAK menambah baris
+  // baru — barisnya satu, penghitungnya yang naik, supaya daftar scan tidak
+  // dibanjiri baris merah untuk paket yang sama.
+  dupCount         Int      @default(1)
   itemId           Int?
   scannedById      Int
   syncedAt         DateTime?

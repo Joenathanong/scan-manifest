@@ -72,6 +72,7 @@ type StateResult = {
     orderId: string | null;
     valid: boolean;
     reason: string | null;
+    dupCount: number;
     manifestTime: string;
     syncedAt: string | null;
   }[];
@@ -664,6 +665,7 @@ export default function Scan2Page() {
                   <td data-label="Status">
                     <span className={`badge ${s.valid ? 'badge-positive' : 'badge-negative'}`}>
                       {s.valid ? 'Valid' : s.reason || 'Ditolak'}
+                      {!s.valid && s.dupCount > 1 ? ` ${s.dupCount}×` : ''}
                     </span>
                   </td>
                   <td className="p3" data-label="OCS">
